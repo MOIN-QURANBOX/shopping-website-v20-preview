@@ -379,8 +379,8 @@
     <div class="bg-white border border-brand-border rounded-2xl shadow-2xl max-w-md w-full p-6 relative">
       <button onclick="closeInvoiceLookupModal()" class="absolute right-4 top-4 text-neutral-400">✕</button>
       <div class="text-center mb-5">
-        <h3 class="serif-title text-lg font-bold text-brand-charcoal">Download Official Tax Invoice</h3>
-        <p class="text-xs text-brand-muted mt-1">Enter Order ID and 10-digit mobile number to view and print your bill.</p>
+        <h3 class="serif-title text-lg font-bold text-brand-charcoal">Download Your Order Invoice (Non-Tax)</h3>
+        <p class="text-xs text-brand-muted mt-1">Sign in to your customer account first. Enter your own Order ID and phone number to download a non-tax order PDF. Payment is not verified by this document.</p>
       </div>
       <form onsubmit="handlePublicInvoiceLookup(event)" class="space-y-3.5 text-xs">
         <div>
@@ -417,6 +417,7 @@
           <label class="block font-semibold mb-1">Firebase account password</label>
           <input type="password" id="cxLoginPass" required placeholder="Enter Firebase password" class="w-full bg-white border rounded-lg p-2.5" />
         </div>
+        <div class="text-right"><button type="button" onclick="openPasswordResetModal('customer')" class="text-emerald-800 font-bold underline underline-offset-2 hover:text-emerald-600">Forgot password? Reset by email</button></div>
         <button type="submit" class="w-full py-2.5 bg-brand-charcoal text-white font-bold uppercase rounded-lg">Sign In</button>
       </form>
 
@@ -451,6 +452,25 @@
     </div>
   </div>
 
+  <!-- ================= FIREBASE PASSWORD RECOVERY (CUSTOMER / OWNER) ================= -->
+  <div id="passwordResetModal" class="hidden fixed inset-0 z-[70] modal-backdrop flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="passwordResetTitle">
+    <div class="bg-brand-cream border border-brand-border rounded-2xl shadow-2xl max-w-md w-full p-6 relative text-xs">
+      <button type="button" onclick="closePasswordResetModal()" class="absolute right-4 top-4 text-neutral-500" aria-label="Close password reset">✕</button>
+      <div class="text-center mb-5">
+        <div class="text-3xl mb-2" aria-hidden="true">✉️</div>
+        <h3 id="passwordResetTitle" class="serif-title text-lg font-bold text-brand-charcoal">Reset Your Password</h3>
+        <p class="text-neutral-600 mt-2 leading-relaxed">Enter your registered email. Firebase will send a secure link to choose a new password. Your orders and cart remain in your account.</p>
+      </div>
+      <form id="passwordResetForm" onsubmit="handlePasswordResetSubmit(event)" class="space-y-3">
+        <label for="passwordResetEmail" class="block font-bold">Registered email address</label>
+        <input type="email" id="passwordResetEmail" autocomplete="email" maxlength="254" required placeholder="yourname@example.com" class="w-full bg-white border rounded-lg p-3" />
+        <p id="passwordResetMessage" class="hidden rounded-lg p-3 leading-relaxed" aria-live="polite" role="status"></p>
+        <button id="passwordResetSendBtn" type="submit" class="w-full py-3 bg-brand-darkgreen text-white font-bold rounded-lg">Send Password Reset Email</button>
+        <button type="button" onclick="closePasswordResetModal()" class="w-full py-2 text-brand-charcoal font-semibold underline">Back to Login</button>
+      </form>
+    </div>
+  </div>
+
   <!-- ================= CUSTOMER PROFILE MODAL ================= -->
   <div id="customerProfileModal" class="hidden fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4">
     <div class="bg-white border border-brand-border rounded-2xl shadow-2xl max-w-lg w-full p-6 relative text-xs">
@@ -459,7 +479,8 @@
         <h3 class="serif-title text-base font-bold text-brand-charcoal" id="custProfName">Customer Profile</h3>
         <p class="text-neutral-500" id="custProfContact">Phone • Email</p>
       </div>
-      <h4 class="font-bold mb-2 uppercase text-neutral-600">My Orders &amp; Delivery Tracking</h4>
+      <h4 class="font-bold mb-1 uppercase text-neutral-600">My Complete Order History &amp; Delivery Tracking</h4>
+      <p id="custOrderCount" class="text-xs text-neutral-500 mb-2" aria-live="polite">Loading orders...</p>
       <div id="custOrderList" class="space-y-2 max-h-60 overflow-y-auto mb-4"></div>
       <div class="flex justify-between items-center pt-3 border-t">
         <button onclick="logoutCurrentUser()" class="px-3 py-1.5 bg-red-50 text-red-600 rounded font-bold uppercase">Log Out</button>
@@ -489,7 +510,51 @@
           <label class="block font-semibold mb-1">Firebase account password</label>
           <input type="password" id="portalPassword" required placeholder="Enter password" class="w-full bg-white border rounded-lg px-3 py-2" />
         </div>
+        <div class="text-right"><button type="button" onclick="openPasswordResetModal('admin')" class="text-emerald-800 text-xs font-bold underline underline-offset-2">Forgot owner password?</button></div>
         <button type="submit" class="w-full py-2.5 bg-brand-darkgreen text-white font-bold uppercase rounded-lg">Unlock Dashboard</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= OWNER SHIPPING & TRACKING EDITOR ================= -->
+  <div id="orderShippingModal" class="hidden fixed inset-0 z-[70] modal-backdrop flex items-center justify-center p-3" role="dialog" aria-modal="true" aria-labelledby="shippingModalTitle">
+    <div class="bg-white border border-brand-border rounded-2xl shadow-2xl max-w-xl w-full max-h-[94vh] overflow-y-auto p-5 sm:p-6 relative text-xs">
+      <button type="button" onclick="closeOrderShippingModal()" class="absolute right-4 top-4 text-neutral-500 text-lg" aria-label="Close shipping editor">✕</button>
+      <h3 id="shippingModalTitle" class="serif-title text-lg font-bold text-brand-charcoal pr-8">Edit Shipping &amp; Tracking</h3>
+      <p class="text-neutral-600 mt-1 mb-4">Authorized Super Admin only. Save carrier updates to Firebase so the customer sees them in My Orders.</p>
+      <div class="bg-brand-sand rounded-lg p-3 mb-4 font-mono break-all" id="shippingOrderSummary"></div>
+      <form id="shippingDetailsForm" onsubmit="saveShippingDetails(event)" class="space-y-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label for="shippingCarrier" class="block font-bold mb-1">Shipping carrier / courier</label>
+            <input id="shippingCarrier" type="text" maxlength="100" list="courierSuggestions" placeholder="e.g. India Post, DTDC" class="w-full border bg-brand-sand rounded p-2.5" />
+            <datalist id="courierSuggestions"><option value="India Post"><option value="Blue Dart"><option value="DTDC"><option value="Delhivery"><option value="Ecom Express"><option value="Xpressbees"><option value="Shadowfax"><option value="Other / Local courier"></datalist>
+          </div>
+          <div><label for="shippingAwb" class="block font-bold mb-1">AWB / Tracking number</label>
+            <input id="shippingAwb" type="text" maxlength="120" placeholder="e.g. AWB12345678" class="w-full border bg-brand-sand rounded p-2.5" />
+          </div>
+        </div>
+        <div><label for="shippingTrackingUrl" class="block font-bold mb-1">Courier tracking website URL (HTTPS)</label>
+          <input id="shippingTrackingUrl" type="url" maxlength="1200" placeholder="https://courier.example/track/…" class="w-full border bg-brand-sand rounded p-2.5" />
+          <p class="text-neutral-500 mt-1">Use the courier's official tracking link. Customers can open it from My Orders.</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label for="shippingDispatchDate" class="block font-bold mb-1">Dispatch date</label><input type="date" id="shippingDispatchDate" class="w-full border bg-brand-sand rounded p-2.5" /></div>
+          <div><label for="shippingEta" class="block font-bold mb-1">Expected delivery date</label><input type="date" id="shippingEta" class="w-full border bg-brand-sand rounded p-2.5" /></div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label for="shippingDeliveredDate" class="block font-bold mb-1">Delivered date (if delivered)</label><input type="date" id="shippingDeliveredDate" class="w-full border bg-brand-sand rounded p-2.5" /></div>
+          <div><label for="shippingOrderStatus" class="block font-bold mb-1">Order / delivery status</label>
+            <select id="shippingOrderStatus" class="w-full border bg-brand-sand rounded p-2.5">
+              <option>Requested</option><option>Confirmed</option><option>Processing</option><option>Packed</option><option>Shipped</option><option>In Transit</option><option>Out for Delivery</option><option>Delivered</option><option>Returned</option><option>Cancelled</option>
+            </select>
+          </div>
+        </div>
+        <div><label for="shippingNotes" class="block font-bold mb-1">Shipping / delivery notes (optional)</label><textarea id="shippingNotes" rows="2" maxlength="500" placeholder="Delivery instructions or dispatch updates" class="w-full border bg-brand-sand rounded p-2.5"></textarea></div>
+        <div id="shippingSaveMessage" role="status" aria-live="polite" class="hidden rounded-lg p-2"></div>
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button id="saveShippingBtn" type="submit" class="flex-1 bg-brand-darkgreen text-white rounded-lg px-4 py-3 font-bold">Save / Update Shipping</button>
+          <button type="button" onclick="clearShippingDetails()" class="border border-amber-500 text-amber-900 rounded-lg px-3 py-2 font-semibold">Clear Tracking Fields</button>
+        </div>
       </form>
     </div>
   </div>
@@ -624,6 +689,15 @@
         <div id="adminTab-orders" class="hidden space-y-4">
           <div class="flex justify-between items-center">
             <h4 class="serif-title text-base font-bold text-brand-charcoal">Customer Orders &amp; Dispatch Ledger</h4>
+          </div>
+          <div class="bg-white border border-brand-border rounded-xl p-3 space-y-2">
+            <label for="adminOrderHistorySearch" class="block text-xs font-bold">Search all order history (order ID, customer name, email, phone or customer ID)</label>
+            <div class="flex flex-wrap gap-2">
+              <input id="adminOrderHistorySearch" type="search" oninput="searchAdminOrderHistory()" placeholder="Search saved orders..." class="flex-1 min-w-[210px] border rounded-lg p-3 text-sm" autocomplete="off" />
+              <button type="button" onclick="clearAdminOrderHistorySearch()" class="border rounded-lg px-3 py-2 text-xs font-bold">Clear filters</button>
+            </div>
+            <p id="adminHistoryFilterStatus" class="text-xs font-bold text-emerald-800"></p>
+            <p id="adminOrderHistoryCount" class="text-xs text-neutral-500" aria-live="polite"></p>
           </div>
           <div id="adminOrdersContainer" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
         </div>
@@ -798,7 +872,12 @@
         <!-- TAB 6: CUSTOMER & STAFF PASSWORD DESK (ADMIN ONLY) -->
         <div id="adminTab-customers" class="hidden space-y-4">
           <h4 class="serif-title text-base font-bold text-brand-charcoal">Staff &amp; Customer Credentials Manager</h4>
-          <p class="text-xs text-brand-muted">Admin can change passwords for all staff members (Owner, Owner 1) and all registered customers.</p>
+          <p class="text-xs text-brand-muted">Search customer profiles using their name, email, phone number, UID, or order ID. View each customer's order history and download order PDFs. Passwords remain private and cannot be viewed or searched.</p>
+          <div class="bg-white border border-brand-border rounded-xl p-3 space-y-2">
+            <label for="adminCustomerSearch" class="block font-bold text-xs">Find a registered customer</label>
+            <input id="adminCustomerSearch" type="search" oninput="searchAdminCustomers()" class="w-full p-3 border rounded-lg text-sm" placeholder="Customer name, email, phone, UID or order ID" autocomplete="off" />
+            <p id="adminCustomerSearchCount" class="text-xs text-neutral-500" aria-live="polite"></p>
+          </div>
           <div class="bg-white rounded-xl border overflow-x-auto">
             <table class="w-full text-left text-xs">
               <thead class="bg-brand-sand border-b uppercase">
@@ -1195,6 +1274,7 @@
   <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
   <!-- Preserve the original storefront and 30+ features; secure Firebase overrides follow -->
   <script defer src="js/app.js"></script>
+  <script defer src="js/order-invoice-pdf.js"></script>
   <script defer src="js/firebase-live.js"></script>
 </body>
 </html>
