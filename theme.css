@@ -1,0 +1,89 @@
+:root {
+  --color-cream: #fbf9f5;
+  --color-sand: #f4efe6;
+  --color-surface: #ffffff;
+  --color-gold: #c5a059;
+  --color-green: #1c3026;
+}
+
+body {
+  background-color: #fbf9f5;
+  color: #1f2421;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dark body {
+  background-color: #141816;
+  color: #e5e7eb;
+}
+
+.dark .bg-white {
+  background-color: #1d2420 !important;
+  color: #f3f4f6 !important;
+}
+
+.dark .bg-brand-sand {
+  background-color: #242c27 !important;
+}
+
+.dark .border-brand-border {
+  border-color: #2f3833 !important;
+}
+
+.serif-title {
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.03em;
+}
+
+.modal-backdrop {
+  background-color: rgba(18, 35, 28, 0.75);
+  backdrop-filter: blur(6px);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes scanline {
+  0% { top: 5%; opacity: 0.8; }
+  50% { top: 90%; opacity: 1; }
+  100% { top: 5%; opacity: 0.8; }
+}
+
+.scanner-line {
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #c5a059, #34d399, transparent);
+  box-shadow: 0 0 12px #c5a059;
+  animation: scanline 2.2s infinite ease-in-out;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #invoicePrintSection,
+  #invoicePrintSection *,
+  #shippingLabelPrintSection,
+  #shippingLabelPrintSection * {
+    visibility: visible !important;
+  }
+  #invoicePrintSection,
+  #shippingLabelPrintSection {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 20px;
+    background: #fff !important;
+    color: #000 !important;
+  }
+}
