@@ -18,6 +18,26 @@
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const textError = error => String(error?.message || error || 'Unknown error').slice(0,220);
+  const safeTrackingUrl = src => {
+    if (!src) return '';
+    try {
+      const url = new URL(String(src).trim());
+      return url.protocol === 'https:' && !url.username && !url.password && url.hostname ? url.href : '';
+    } catch { return ''; }
+  };
+  const SHIP_STATUSES = ['Requested','Confirmed','Processing','Packed','Shipped','In Transit','Out for Delivery','Delivered','Returned','Cancelled'];
+  const shipmentFor = o => {
+    const s=o?.shipping && typeof o.shipping==='object' ? o.shipping : {};
+    return {
+      carrier:String(s.carrier ?? o?.courierName ?? '').slice(0,100),
+      trackingNumber:String(s.trackingNumber ?? o?.awb ?? '').slice(0,120),
+      trackingUrl:safeTrackingUrl(s.trackingUrl ?? o?.trackingUrl ?? ''),
+      dispatchDate:String(s.dispatchDate||'').slice(0,10),
+      eta:String(s.eta||'').slice(0,10),
+      deliveredDate:String(s.deliveredDate||'').slice(0,10),
+      notes:String(s.notes||'').slice(0,500)
+    };
+  };
   const safeImage = src => {
     try { const u = new URL(src); return u.protocol === 'https:' ? u.href : ''; } catch { return ''; }
   };
@@ -105,7 +125,13 @@
       this.settingsReady=false; this.lastSettings='';
       // NEVER show the previous account's cart or order data in a new session.
       cart=[]; wishlist=[]; orders=[]; currentUser=null; users=[];
-      this.profiles={}; posTicket=[];
+      this.profiles={}; posTicket=[]; selectedAdminCustomerUID='';
+      // Clear prior admin-only DOM when switching accounts (prevents stale private records).
+      for(const id of ['adminOrdersContainer','adminCustomersTableBody','adminOrderHistoryCount','adminCustomerSearchCount','custOrderList','custOrderCount','custProfContact','custProfName','trackingResultBox','shippingOrderSummary']) {
+        const node=$(id);if(node)node.textContent='';
+      }
+      if($('adminOrderHistorySearch'))$('adminOrderHistorySearch').value='';
+      if($('adminCustomerSearch'))$('adminCustomerSearch').value='';
       closeAdminDashboardModal(); closeCustomerProfileModal();
       $('staffLogoutNavBtn')?.classList.add('hidden');
       $('staffLoginNavBtn')?.classList.remove('hidden');
@@ -140,7 +166,7 @@
           this.posSales=Object.entries(record||{}).map(([key,v])=>({...v,__key:key,channel:'Showroom POS'}));
           this.updateAdminOrders();
         });
-        this.on('customerProfiles', record=>{this.profiles=record||{};renderAdminCustomers();});
+        this.on('customerProfiles', record=>{this.profiles=record||{};renderAdminCustomers();renderAdminOrders();});
         this.on('adminData/settings', data=>{
           if(data && typeof data==='object') {
             this.applying=true;
@@ -171,7 +197,7 @@
         });
         this.on('orderRequests/'+u.uid,record=>{
           if(this.uid!==u.uid) return;
-          orders=Object.entries(record||{}).map(([key,v])=>({...v,__uid:u.uid,__key:key,orderId:v.orderId||key})).reverse();
+          orders=Object.entries(record||{}).filter(([,v])=>v&&typeof v==='object').map(([key,v])=>({...v,__uid:u.uid,__key:key,orderId:v.orderId||key})).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
           if(!$('customerProfileModal')?.classList.contains('hidden')) renderCustProfileOrders();
         });
         this.setStatus('✓ Signed in · Your cart and orders are account-specific','ok');
@@ -193,6 +219,14 @@
         await this.applySession(response.user);
       }
       return response;
+    },
+    async sendPasswordReset(email) {
+      if (!this.auth) throw Error('Firebase Authentication is unavailable. Please try again later.');
+      const address=String(email||'').trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) || address.length>254) throw Error('Enter a valid registered email address.');
+      // Firebase sends the secure email. Never handle or store customer passwords ourselves.
+      // Do not expose whether an account exists.
+      await this.auth.sendPasswordResetEmail(address);
     },
     async register({name,phone,email,password}) {
       if(!this.auth) throw Error('Firebase connection unavailable.');
@@ -310,6 +344,44 @@
   try{if(localStorage.getItem('mqb_theme')==='dark') document.documentElement.classList.add('dark');}catch{}
 
 
+  // --- Firebase password recovery (does not modify user data or account roles) ---
+  let resetReturnTo='customer';
+  window.openPasswordResetModal=(from='customer')=>{
+    resetReturnTo=from==='admin'?'admin':'customer';
+    const address=resetReturnTo==='admin'?$('portalUsername')?.value:$('cxLoginId')?.value;
+    $('customerAuthModal')?.classList.add('hidden');
+    $('adminLoginModal')?.classList.add('hidden');
+    const email=$('passwordResetEmail'); if(email) email.value=address?.trim()||'';
+    const notice=$('passwordResetMessage');if(notice){notice.textContent='';notice.classList.add('hidden');}
+    $('passwordResetSendBtn').disabled=false;
+    $('passwordResetModal')?.classList.remove('hidden');
+    email?.focus();
+  };
+  window.closePasswordResetModal=()=>{
+    $('passwordResetModal')?.classList.add('hidden');
+    if(resetReturnTo==='admin') $('adminLoginModal')?.classList.remove('hidden');
+    else openCustomerAuthModal('login');
+  };
+  window.handlePasswordResetSubmit=async e=>{
+    e.preventDefault();
+    const notice=$('passwordResetMessage');const button=$('passwordResetSendBtn');
+    const email=$('passwordResetEmail')?.value.trim()||'';
+    if(button) button.disabled=true;
+    try {
+      await live.sendPasswordReset(email);
+      if(notice){notice.textContent='If this email belongs to a Firebase account, a password-reset link will be sent. Check your inbox and spam folder. The link may expire.';notice.className='rounded-lg p-3 leading-relaxed bg-emerald-50 text-emerald-900';}
+    } catch(err) {
+      const code=err?.code||'';
+      if(notice){
+        // Firebase projects vary in enumeration-protection settings; avoid disclosing account existence.
+        notice.textContent=(code==='auth/user-not-found'||code==='auth/email-already-in-use')
+          ? 'If this email belongs to a Firebase account, a password-reset link will be sent.'
+          : 'Could not request a reset email: '+(code==='auth/too-many-requests'?'Too many attempts. Please try again later.':textError(err));
+        notice.className='rounded-lg p-3 leading-relaxed bg-amber-50 text-amber-900';
+      }
+    } finally {if(button) button.disabled=false;}
+  };
+
   // --- Firebase sign-in replaces localStorage password and PIN authentication ---
   window.validateSessionPersistence=()=>{};
   window.startSessionCountdownTimer=()=>{};
@@ -410,25 +482,80 @@
     finally{if(btn)btn.disabled=false;}
   };
   window.cancelCustomerOrder=()=>alert('Please contact the owner using WhatsApp to request cancellation. Changes require owner review.');
-  window.handlePublicInvoiceLookup=event=>{event.preventDefault();alert('Tax invoices are issued only after payment verification by the shop. Contact the owner for an invoice.');};
+  // Invoice is generated ONLY from orders already authorized and read by Firebase.
+  // A guessed order ID and phone number are not substitutes for signing in.
+  const getAuthorizedOrder=(uid,key)=>{
+    if(!currentUser || !live.uid) return null;
+    const admin=isAdmin();
+    const item=orders.find(o=>(o.__uid===uid || (admin && uid==='POS' && o.channel==='Showroom POS'))&&o.__key===key);
+    if(!item) return null;
+    if(!admin && !(currentUser.role==='customer' && uid===live.uid))return null;
+    return item;
+  };
+  window.downloadOrderInvoice=(uid,key)=>{
+    const o=getAuthorizedOrder(uid,key);
+    if(!o) return alert('Order not found in your account, or access is not permitted. Sign in first.');
+    if(!window.MQBInvoicePDF?.saveInvoice)return alert('PDF generator unavailable. Refresh the website and try again.');
+    const profile=isAdmin()?(live.profiles?.[uid]||{}):(currentUser||{});
+    try{MQBInvoicePDF.saveInvoice({order:o,shop:config,profile});}
+    catch(error){alert('Invoice download failed: '+textError(error));}
+  };
+  window.handlePublicInvoiceLookup=event=>{
+    event.preventDefault();
+    if(!live.uid)return alert('Please sign in to your customer account to download your own order invoice.');
+    const id=String($('lookupOrderId')?.value||'').trim().toUpperCase();
+    const phone=String($('lookupPhone')?.value||'').replace(/\D/g,'');
+    const matches=orders.filter(o=>String(o.orderId||'').toUpperCase()===id
+      && (isAdmin() || (o.__uid===live.uid && String(o.customerPhone||'').replace(/\D/g,'').endsWith(phone))));
+    if(!matches.length)return alert('No matching order is accessible in your signed-in account.');
+    if(!isAdmin() && phone.length<10)return alert('Enter your complete registered order phone number.');
+    window.downloadOrderInvoice(matches[0].__uid,matches[0].__key);
+  };
   window.prepareAndPrintInvoice=(id)=>{
     const o=orders.find(x=>x.orderId===id);
-    if(!o || o.channel!=='Showroom POS') return alert('This is only an order request, not an invoice. Ask the owner for the verified invoice.');
-    alert('POS invoice printing requires verified tax details and payment review.');
+    if(o?.__key && (o.__uid || (isAdmin() && o.channel==='Showroom POS')))return window.downloadOrderInvoice(o.__uid||'POS',o.__key);
+    alert('Only signed-in orders stored in Firebase can be downloaded here.');
+  };
+  // Tracking uses only records already authorized by Firebase for the signed-in user.
+  const shippingCard=o=>{
+    const s=shipmentFor(o);
+    const tracking=s.trackingUrl;
+    return `<div class="mt-2 p-2 bg-emerald-50 border border-emerald-100 rounded-lg space-y-1">
+      <p><strong>Courier:</strong> ${esc(s.carrier||'Not assigned')}</p>
+      <p><strong>AWB / Tracking:</strong> ${esc(s.trackingNumber||'Awaiting dispatch')}</p>
+      ${s.dispatchDate?`<p><strong>Dispatched:</strong> ${esc(s.dispatchDate)}</p>`:''}
+      ${s.eta?`<p><strong>Expected delivery:</strong> ${esc(s.eta)}</p>`:''}
+      ${s.deliveredDate?`<p><strong>Delivered:</strong> ${esc(s.deliveredDate)}</p>`:''}
+      ${s.notes?`<p><strong>Shipping note:</strong> ${esc(s.notes)}</p>`:''}
+      ${tracking?`<p><a href="${esc(tracking)}" target="_blank" rel="noopener noreferrer" class="text-emerald-800 font-bold underline underline-offset-2">Track on courier website ↗</a></p>`:''}
+    </div>`;
   };
   window.trackOrderById=()=>{
     const id=$('trackInputId')?.value.trim().toUpperCase()||'';const node=$('trackingResultBox');if(!node)return;
-    const found=orders.find(x=>x.orderId.toUpperCase()===id);
+    const found=orders.find(x=>String(x.orderId||'').toUpperCase()===id);
     node.classList.remove('hidden');
-    node.textContent=found?('Request: '+found.orderId+' | Status: '+found.status+' | Courier: '+(found.courierName||'Not assigned')):'No matching order in your authorized account.';
+    node.innerHTML=found?`<p><strong>Order:</strong> ${esc(found.orderId)}</p><p><strong>Status:</strong> ${esc(found.status||'Requested')}</p>${shippingCard(found)}`
+      :'No matching order in your authorized account. Sign in to view tracking details.';
   };
   window.renderCustProfileOrders=()=>{
     if(!currentUser||currentUser.role!=='customer')return;
     const node=$('custOrderList');if(!node)return;
-    node.innerHTML=orders.length?orders.map(o=>`<div class="p-3 border rounded-lg bg-brand-sand/50 text-xs space-y-1">
-      <strong>${esc(o.orderId)}</strong> — ${esc(o.status||'Requested')}<br>
-      <span>Estimate: ₹${price(o.total).toLocaleString('en-IN')}</span><br>
-      <small>Payment not verified · ${esc(o.deliveryChoice||'Standard delivery')}</small></div>`).join(''):'<p class="text-xs text-neutral-500">No order requests yet.</p>';
+    const own=orders.filter(o=>o.__uid===live.uid);
+    const count=$('custOrderCount');if(count)count.textContent=own.length+' order'+(own.length===1?'':'s')+' in your account';
+    node.innerHTML=own.length?own.map(o=>{
+      const items=Array.isArray(o.items)?o.items:[];
+      return `<article class="p-3 border rounded-lg bg-brand-sand/50 text-xs space-y-2">
+        <div class="flex flex-wrap justify-between gap-2"><strong>${esc(o.orderId||o.__key)}</strong><span>${esc(o.status||'Requested')}</span></div>
+        <p><strong>Date:</strong> ${esc(o.date?new Date(o.date).toLocaleString('en-IN'):'Not recorded')} · <strong>Estimate:</strong> INR ${price(o.total).toLocaleString('en-IN')}</p>
+        <p><strong>Products:</strong> ${esc(items.map(i=>`${i.title||'Item'} × ${i.qty||0}`).join(', ')||'No item details')}</p>
+        <p><strong>Payment:</strong> ${esc(o.paymentStatus||'unverified')} · <strong>Delivery:</strong> ${esc(o.deliveryChoice||'Standard')}</p>
+        ${shippingCard(o)}
+        <button type="button" class="customer-invoice-download px-3 py-2 bg-brand-darkgreen text-white font-bold rounded-lg">Download Order Invoice (PDF)</button>
+      </article>`;
+    }).join(''):'<p class="text-xs text-neutral-500">No previous orders in this account yet.</p>';
+    node.querySelectorAll('.customer-invoice-download').forEach((el,index)=>el.addEventListener('click',()=>{
+      const o=own[index];window.downloadOrderInvoice(o.__uid,o.__key);
+    }));
   };
 
   // --- Verified owner edit controls. Never write unconfirmed changes. ---
@@ -462,32 +589,185 @@
     for(const id of ['anaTotalRevenue','hubTotalRevenue']) if($(id))$(id).textContent=formatPrice(revenue);
     for(const id of ['anaTotalOrders','hubTotalOrders']) if($(id))$(id).textContent=orders.length;
   };
+  // Owner order editor: update only the shipping-related fields, never overwrite the order.
+  let editingShippingRef=null;
+  const statusNotice=(message,error=false)=>{
+    const el=$('shippingSaveMessage');if(!el)return;
+    el.textContent=message;el.className='rounded-lg p-2 '+(error?'bg-red-50 text-red-800':'bg-emerald-50 text-emerald-800');
+  };
+  window.openOrderShippingModal=(uid,key)=>{
+    if(!ensureAdmin())return;
+    const record=orders.find(o=>o.__uid===uid&&o.__key===key);
+    if(!record)return alert('Order not found. Refresh the dashboard.');
+    editingShippingRef={uid,key};
+    const s=shipmentFor(record);
+    $('shippingOrderSummary').textContent='Order '+(record.orderId||key)+' · '+(record.customerName||'Customer');
+    for(const [field,val] of Object.entries({shippingCarrier:s.carrier==='Not assigned'?'':s.carrier,
+      shippingAwb:s.trackingNumber,shippingTrackingUrl:s.trackingUrl,
+      shippingDispatchDate:s.dispatchDate,shippingEta:s.eta,shippingDeliveredDate:s.deliveredDate,shippingNotes:s.notes})){
+      const input=$(field);if(input)input.value=val;
+    }
+    const status=$('shippingOrderStatus');if(status){
+      const orderStatus=String(record.status||'Requested');
+      if(!SHIP_STATUSES.includes(orderStatus)){
+        const opt=document.createElement('option');opt.value=orderStatus;opt.textContent=orderStatus;status.appendChild(opt);
+      }
+      status.value=orderStatus;
+    }
+    $('shippingSaveMessage')?.classList.add('hidden');
+    $('orderShippingModal')?.classList.remove('hidden');
+  };
+  window.closeOrderShippingModal=()=>{
+    $('orderShippingModal')?.classList.add('hidden');editingShippingRef=null;
+  };
+  window.saveShippingDetails=async e=>{
+    e.preventDefault();
+    if(!ensureAdmin()||!editingShippingRef)return;
+    const {uid,key}=editingShippingRef;
+    if(!orders.some(o=>o.__uid===uid&&o.__key===key)) return statusNotice('Order not found or no longer available.',true);
+    const rawUrl=$('shippingTrackingUrl')?.value.trim()||'';
+    const trackingUrl=safeTrackingUrl(rawUrl);
+    if(rawUrl&&!trackingUrl)return statusNotice('Enter a valid HTTPS link from the courier website.',true);
+    const newStatus=$('shippingOrderStatus')?.value||'Requested';
+    if(!SHIP_STATUSES.includes(newStatus) && !orders.some(o=>o.__uid===uid&&o.__key===key&&o.status===newStatus))
+      return statusNotice('Select a valid order status.',true);
+    const carrier=$('shippingCarrier')?.value.trim().slice(0,100)||'';
+    const trackingNumber=$('shippingAwb')?.value.trim().slice(0,120)||'';
+    if(/[\r\n\x00-\x1f]/.test(carrier+trackingNumber)) return statusNotice('Remove line breaks or special control characters.',true);
+    const date=(id)=>{const value=$(id)?.value||'';return /^\d{4}-\d{2}-\d{2}$/.test(value)?value:'';};
+    const shipping={
+      carrier,trackingNumber,trackingUrl,
+      dispatchDate:date('shippingDispatchDate'),eta:date('shippingEta'),
+      deliveredDate:date('shippingDeliveredDate'),notes:($('shippingNotes')?.value||'').trim().slice(0,500),
+      updatedAt:firebase.database.ServerValue.TIMESTAMP,
+      updatedBy:live.uid
+    };
+    const button=$('saveShippingBtn');if(button)button.disabled=true;
+    try {
+      // Multipath update preserves customer address, items, totals, order ID and all other data.
+      await live.db.ref('orderRequests/'+uid+'/'+key).update({
+        shipping, courierName:carrier||'Not assigned', awb:trackingNumber, trackingUrl, status:newStatus
+      });
+      statusNotice('Shipping and tracking details saved to Firebase. Customer devices will refresh automatically.');
+      live.setStatus('✓ Order shipping details saved in Firebase','ok');
+    }catch(err){statusNotice('Shipping details NOT saved: '+textError(err),true);}
+    finally{if(button)button.disabled=false;}
+  };
+  window.clearShippingDetails=()=>{
+    if(!ensureAdmin()||!editingShippingRef)return;
+    if(!confirm('Clear the tracking fields in this editor? Press Save / Update Shipping to apply the changes to Firebase. The order itself will remain intact.'))return;
+    for(const id of ['shippingCarrier','shippingAwb','shippingTrackingUrl','shippingDispatchDate','shippingEta','shippingDeliveredDate','shippingNotes']) if($(id))$(id).value='';
+    statusNotice('Fields cleared locally. Click Save / Update Shipping to save the change.');
+  };
+  // Admin search includes Firebase profile data and all historic customer orders.
+  let selectedAdminCustomerUID='';
+  const adminQuery=()=>String($('adminOrderHistorySearch')?.value||'').trim().toLowerCase();
+  const adminOrderMatches=(o,q)=>{
+    if(selectedAdminCustomerUID && o.__uid!==selectedAdminCustomerUID) return false;
+    if(!q)return true;
+    const p=live.profiles?.[o.__uid]||{};
+    const fields=[o.orderId,o.__key,o.__uid,o.customerName,o.customerPhone,o.customerEmail,o.email,
+      o.status,o.channel,p.name,p.phone,p.email];
+    return fields.some(field=>String(field??'').toLowerCase().includes(q));
+  };
+  window.searchAdminOrderHistory=()=>{if(ensureAdmin()) renderAdminOrders();};
+  window.clearAdminOrderHistorySearch=()=>{
+    if(!ensureAdmin())return;
+    selectedAdminCustomerUID='';if($('adminOrderHistorySearch'))$('adminOrderHistorySearch').value='';renderAdminOrders();
+  };
+  window.showAdminCustomerOrders=uid=>{
+    if(!ensureAdmin())return;
+    selectedAdminCustomerUID=uid;
+    if($('adminOrderHistorySearch'))$('adminOrderHistorySearch').value='';
+    switchAdminTab('orders');renderAdminOrders();
+  };
   window.renderAdminOrders=()=>{
     const node=$('adminOrdersContainer');if(!node)return;
-    node.innerHTML=orders.length?orders.map(o=>{
-      const id=esc(o.orderId||'');
-      const statuses=['Requested','Processing','Shipped','Delivered','Cancelled'];
-      const choices=statuses.map(s=>`<option value="${s}" ${o.status===s?'selected':''}>${s}</option>`).join('');
+    if(!isAdmin()){node.textContent='Verified Super Admin sign-in required.';return;}
+    const visible=orders.filter(o=>adminOrderMatches(o,adminQuery()));
+    const counter=$('adminOrderHistoryCount');if(counter)counter.textContent=visible.length+' matching order(s) of '+orders.length+' total';
+    const selectedName=live.profiles?.[selectedAdminCustomerUID]?.name||selectedAdminCustomerUID;
+    const selected=$('adminHistoryFilterStatus');if(selected) selected.textContent=selectedAdminCustomerUID?'Customer filter: '+selectedName:'';
+    node.innerHTML=visible.length?visible.map(o=>{
+      const id=esc(o.orderId||o.__key||'');
+      const choices=Array.from(new Set([...SHIP_STATUSES,String(o.status||'Requested')]))
+        .map(s=>`<option value="${esc(s)}" ${o.status===s?'selected':''}>${esc(s)}</option>`).join('');
       const items=Array.isArray(o.items)?o.items:[];
-      return `<div class="p-3 border rounded-lg bg-white shadow-sm text-xs space-y-2">
+      const s=shipmentFor(o);
+      const profile=live.profiles?.[o.__uid]||{};
+      return `<article class="p-3 border rounded-lg bg-white shadow-sm text-xs space-y-2">
         <div class="flex justify-between gap-2"><strong>${id}</strong><strong>${esc(o.status||'Requested')}</strong></div>
-        <p><strong>Customer:</strong> ${esc(o.customerName||'')} · ${esc(o.customerPhone||'')}</p>
+        <p><strong>Date:</strong> ${esc(o.date?new Date(o.date).toLocaleString('en-IN'):'Not recorded')}</p>
+        <p><strong>Customer:</strong> ${esc(o.customerName||profile.name||'')} · ${esc(o.customerPhone||profile.phone||'')}</p>
+        <p><strong>Email:</strong> ${esc(o.customerEmail||o.email||profile.email||'Not recorded')}</p>
         <p>${esc(items.map(i=>i.title+' (x'+i.qty+')').join(', '))}</p>
-        <p class="text-amber-700 font-semibold">Estimated total ₹${price(o.total).toLocaleString('en-IN')} · Payment ${esc(o.paymentStatus||'not verified')}</p>
+        <p class="text-amber-700 font-semibold">Estimated total INR ${price(o.total).toLocaleString('en-IN')} · Payment ${esc(o.paymentStatus||'not verified')}</p>
         <p>${esc(o.address||'')} ${esc(o.postalCode||'')} · ${esc(o.deliveryChoice||'')}</p>
-        <div class="flex gap-2 items-center"><label for="ship-${esc(o.__key||id)}">Status</label>
-        <select id="ship-${esc(o.__key||id)}" data-order="${id}" class="cloud-order-status border rounded p-2" ${o.__uid?'':'disabled'}>${choices}</select></div>
-        <p class="text-[10px] text-neutral-500">Carrier booking and payment confirmation require separate verification.</p>
-      </div>`;
-    }).join(''):'<p class="text-neutral-500 text-sm">No authenticated customer order requests yet.</p>';
-    node.querySelectorAll('.cloud-order-status').forEach(el=>el.addEventListener('change',()=>updateOrderStatus(el.dataset.order,el.value)));
+        <div class="flex gap-2 items-center flex-wrap"><label for="ship-${esc(o.__key||id)}">Status</label>
+        <select id="ship-${esc(o.__key||id)}" class="cloud-order-status border rounded p-2" ${o.__uid?'':'disabled'}>${choices}</select></div>
+        <div class="bg-brand-sand border rounded p-2 space-y-1">
+          <p><strong>Courier:</strong> ${esc(s.carrier||'Not assigned')} · <strong>AWB:</strong> ${esc(s.trackingNumber||'Not assigned')}</p>
+          ${s.dispatchDate?`<p>Dispatched: ${esc(s.dispatchDate)}</p>`:''}
+          ${s.eta?`<p>ETA: ${esc(s.eta)}</p>`:''}
+          ${s.trackingUrl?`<a href="${esc(s.trackingUrl)}" target="_blank" rel="noopener noreferrer" class="underline font-bold text-emerald-800">Open courier tracking</a>`:''}
+        </div>
+        <button type="button" class="cloud-download-invoice border border-emerald-700 text-emerald-900 px-4 py-2 rounded-lg font-bold w-full" ${o.__key?'':'disabled'}>Download Order Invoice (PDF)</button>
+        ${o.__uid&&o.__key?`<button type="button" class="cloud-edit-shipping bg-brand-darkgreen text-white px-4 py-2 rounded-lg font-bold w-full">Edit Shipping / Courier Tracking</button>`
+          :'<p class="text-[10px] text-neutral-500">POS invoices and shipping need separate verified sales records.</p>'}
+        <p class="text-[10px] text-neutral-500">Non-tax order invoice, not payment proof. Courier booking and payment verification remain separate.</p>
+      </article>`;
+    }).join(''):'<p class="text-neutral-500 text-sm">No orders match this search.</p>';
+    node.querySelectorAll('.cloud-order-status').forEach((el,index)=>{
+      const record=visible[index];el.addEventListener('change',async()=>{
+        if(!ensureAdmin()||!record.__uid||!record.__key)return;
+        try {await live.db.ref('orderRequests/'+record.__uid+'/'+record.__key+'/status').set(el.value);} 
+        catch(err){alert('Order status not saved: '+textError(err));renderAdminOrders();}
+      });
+    });
+    node.querySelectorAll('.cloud-edit-shipping').forEach(el=>{
+      // Use data attribute/index from matching cards, not filtered positions: prevents wrong-order edits.
+      const card=el.closest('article');const record=visible[Array.prototype.indexOf.call(node.children,card)];
+      el.addEventListener('click',()=>openOrderShippingModal(record.__uid,record.__key));
+    });
+    node.querySelectorAll('.cloud-download-invoice').forEach(el=>{
+      const card=el.closest('article');const record=visible[Array.prototype.indexOf.call(node.children,card)];
+      el.addEventListener('click',()=>window.downloadOrderInvoice(record.__uid||'POS',record.__key));
+    });
   };
+  window.searchAdminCustomers=()=>{if(ensureAdmin())renderAdminCustomers();};
   window.renderAdminCustomers=()=>{
     const node=$('adminCustomersTableBody');if(!node)return;
-    const profiles=Object.entries(live.profiles||{});
-    node.innerHTML=profiles.length?profiles.map(([uid,p])=>`<tr class="border-b"><td class="p-3">${esc(p.name||'Customer')}</td>
-      <td class="p-3">Firebase</td><td class="p-3">${esc(p.phone||'')}</td><td class="p-3">${esc(p.email||'')}</td>
-      <td class="p-3">Account-specific</td><td class="p-3 text-right">Password reset via Firebase only</td></tr>`).join(''):'<tr><td class="p-4" colspan="6">No Firebase customer profiles registered yet.</td></tr>';
+    if(!isAdmin()){node.textContent='Admin access required.';return;}
+    const search=String($('adminCustomerSearch')?.value||'').trim().toLowerCase();
+    const profiles=Object.entries(live.profiles||{}).filter(([uid,p])=>
+      [uid,p.name,p.email,p.phone].some(v=>String(v??'').toLowerCase().includes(search)) ||
+      orders.some(o=>o.__uid===uid && [o.orderId,o.customerName,o.customerPhone].some(v=>String(v??'').toLowerCase().includes(search))));
+    const count=$('adminCustomerSearchCount');if(count)count.textContent=profiles.length+' matching customer(s)';
+    node.innerHTML=profiles.length?profiles.map(([uid,p])=>{
+      const history=orders.filter(o=>o.__uid===uid);
+      return `<tr class="border-b">
+      <td class="p-3"><strong>${esc(p.name||'Customer')}</strong><div class="text-[10px] text-neutral-500 break-all">ID: ${esc(uid)}</div></td>
+      <td class="p-3">Customer</td><td class="p-3">${esc(p.phone||'')}</td><td class="p-3">${esc(p.email||'')}</td>
+      <td class="p-3">${history.length} order(s)</td>
+      <td class="p-3 text-right space-y-1">
+        <button type="button" class="view-customer-orders bg-brand-darkgreen text-white px-2 py-1.5 rounded font-bold">View order history</button>
+        <button type="button" class="send-customer-reset border border-emerald-700 text-emerald-800 px-2 py-1.5 rounded font-bold" ${p.email?'':'disabled'}>Send reset email</button>
+      </td></tr>`;
+    }).join(''):'<tr><td class="p-4" colspan="6">No customer profiles match this search.</td></tr>';
+    node.querySelectorAll('.view-customer-orders').forEach((el,index)=>{
+      el.addEventListener('click',()=>window.showAdminCustomerOrders(profiles[index][0]));
+    });
+    node.querySelectorAll('.send-customer-reset').forEach((el,index)=>{
+      el.addEventListener('click',async()=>{
+        if(!ensureAdmin())return;
+        const email=String(profiles[index][1].email||'').trim();
+        if(!email||!confirm('Send a Firebase password-reset email to '+email+'? The recipient sets their own password.'))return;
+        el.disabled=true;
+        try {await live.sendPasswordReset(email);alert('Reset request submitted. If the account exists, Firebase will email the customer.');}
+        catch(err){alert('Reset request failed: '+textError(err));}
+        finally{el.disabled=false;}
+      });
+    });
   };
   window.openManageUserModal=()=>alert('Passwords and user roles are managed in Firebase Authentication and by trusted server tools, not in the customer browser.');
   window.saveUserManagement=window.deleteUserAccount=()=>alert('Account changes are disabled here for safety. Use Firebase Authentication and a trusted admin backend.');
