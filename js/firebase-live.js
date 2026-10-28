@@ -987,7 +987,23 @@
   const originalTab=window.switchAdminTab;
   window.switchAdminTab=tab=>{
     if(!isAdmin() || !(staffTabAllow[currentUser.role]||[]).includes(tab))return;
+    // The original V20 dashboard lists its original tabs only. Calling it for
+    // 'staff' hides those panels but does not reveal adminTab-staff, leaving a
+    // blank modal. Keep the original navigation, then explicitly toggle the
+    // new V23 panel without modifying js/app.js or the legacy dashboard tabs.
+    const staffPanel=$('adminTab-staff');
+    const staffButton=$('adminTabBtn-staff');
     originalTab(tab);
+    // The original switcher resets button CSS classes. Restore role-aware
+    // visibility after every switch so Managers cannot see privileged tabs.
+    applyStaffTabs();
+    if(staffPanel){
+      if(tab==='staff') staffPanel.classList.remove('hidden');
+      else staffPanel.classList.add('hidden');
+    }
+    if(staffButton && isSuperAdmin()) staffButton.className='px-4 py-3 border-b-2 font-bold whitespace-nowrap '+
+      (tab==='staff'?'border-brand-charcoal text-brand-charcoal bg-white':'border-transparent text-neutral-500 hover:text-black');
+    if(tab==='staff') renderStaffRoleTable();
   };
   // Re-rendering inventory must not restore manager edit buttons.
   const originalInventory=window.renderAdminInventory;
