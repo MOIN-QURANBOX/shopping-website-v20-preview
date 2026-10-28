@@ -1,0 +1,98 @@
+[
+  {
+    "id": "prod-101",
+    "title": "Holy Quran – Urdu translation in ROMAN Script",
+    "category": "Tarjuma Qurans",
+    "sku": "MQB-QUR-01",
+    "stock": 45,
+    "salePrice": 999,
+    "oldPrice": 1599,
+    "wholesalePrice": 750,
+    "image": "https://images.unsplash.com/photo-1584286595398-a59f21d313f5?auto=format&fit=crop&w=600&q=80",
+    "desc": "Authentic print, easy reading Roman Urdu script with clear Arabic text."
+  },
+  {
+    "id": "prod-102",
+    "title": "Handcrafted Carved Velvet Wooden Quran Box",
+    "category": "Quran Boxes & Rehal",
+    "sku": "MQB-BOX-02",
+    "stock": 25,
+    "salePrice": 1299,
+    "oldPrice": 1899,
+    "wholesalePrice": 950,
+    "image": "https://images.unsplash.com/photo-1609599006353-e629aaabfeae?auto=format&fit=crop&w=600&q=80",
+    "desc": "Hand-carved premium wooden storage box with velvet interior cushion."
+  },
+  {
+    "id": "prod-103",
+    "title": "Turkish Velvet Cushioned Janamaz (Prayer Mat)",
+    "category": "Janamaz",
+    "sku": "MQB-JAN-03",
+    "stock": 50,
+    "salePrice": 799,
+    "oldPrice": 1299,
+    "wholesalePrice": 580,
+    "image": "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80",
+    "desc": "High-density foam cushion, embossed Turkish velvet floral pattern."
+  },
+  {
+    "id": "prod-104",
+    "title": "Wooden Folding Rehal Book Stand with Inlay",
+    "category": "Quran Boxes & Rehal",
+    "sku": "MQB-REH-04",
+    "stock": 60,
+    "salePrice": 549,
+    "oldPrice": 899,
+    "wholesalePrice": 390,
+    "image": "https://images.unsplash.com/photo-1590076215667-873d31295988?auto=format&fit=crop&w=600&q=80",
+    "desc": "Folding rosewood Rehal with polished brass inlay."
+  },
+  {
+    "id": "prod-105",
+    "title": "Deluxe Hajj & Umrah Dua Pocket Cards Set",
+    "category": "Hajj & Umrah",
+    "sku": "MQB-HAJ-05",
+    "stock": 80,
+    "salePrice": 399,
+    "oldPrice": 699,
+    "wholesalePrice": 220,
+    "image": "https://images.unsplash.com/photo-1564769625905-50e93615e769?auto=format&fit=crop&w=600&q=80",
+    "desc": "Laminated authentic supplication cards with neck lanyard."
+  },
+  {
+    "id": "prod-106",
+    "title": "Crystal Tasbih (99 Beads) with Velvet Pouch",
+    "category": "Namaz Caps & Tasbih",
+    "sku": "MQB-TAS-06",
+    "stock": 100,
+    "salePrice": 249,
+    "oldPrice": 499,
+    "wholesalePrice": 140,
+    "image": "https://images.unsplash.com/photo-1591206369811-4eeb2f03bc95?auto=format&fit=crop&w=600&q=80",
+    "desc": "Hand-strung faceted crystal beads with golden tassel."
+  },
+  {
+    "id": "prod-107",
+    "title": "Luxury Bridal Quran Gift Box with Scented Attar",
+    "category": "Quran Boxes & Rehal",
+    "sku": "MQB-GFT-07",
+    "stock": 15,
+    "salePrice": 2499,
+    "oldPrice": 3499,
+    "wholesalePrice": 1800,
+    "image": "https://images.unsplash.com/photo-1512436991641-6745cdb1723f?auto=format&fit=crop&w=600&q=80",
+    "desc": "Complete wedding gift set: Gold-foil Holy Quran, prayer rug, crystal tasbih, and attar."
+  },
+  {
+    "id": "prod-108",
+    "title": "Handmade Omani Namaz Cap (Barkati Keffiyeh)",
+    "category": "Namaz Caps & Tasbih",
+    "sku": "MQB-CAP-08",
+    "stock": 90,
+    "salePrice": 299,
+    "oldPrice": 550,
+    "wholesalePrice": 180,
+    "image": "https://images.unsplash.com/photo-1585032226651-759b368d7246?auto=format&fit=crop&w=600&q=80",
+    "desc": "Breathable cotton prayer cap with authentic geometric embroidery."
+  }
+]
