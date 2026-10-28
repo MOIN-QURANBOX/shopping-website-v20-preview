@@ -49,10 +49,16 @@
     delete copy.apiGateway; // never put SMS keys/webhook secrets into web database
     return { config: copy, coupons: coupons.map(c => ({code:c.code,type:c.type,discount:c.discount,minOrder:c.minOrder})) };
   };
-  const isAdmin = () => currentUser?.role === 'admin' && live.verifiedAdmin && !!live.uid;
-  const ensureAdmin = () => { if (!isAdmin()) { alert('Sign in using your verified Firebase Super Admin account.'); return false; } return true; };
+  // Authorization is determined from Firebase /admins or /staffRoles — never from localStorage.
+  const isAdmin = () => !!live.uid && live.verifiedAdmin && ['admin','owner','manager'].includes(currentUser?.role);
+  const isSuperAdmin = () => isAdmin() && currentUser.role==='admin';
+  const canEditStore = () => isAdmin() && ['admin','owner'].includes(currentUser.role);
+  const canManageOrders = () => isAdmin();
+  const ensureAdmin = () => { if (!canManageOrders()) { alert('Sign in as verified Super Admin, Owner or Manager staff.'); return false; } return true; };
+  const ensureStoreEditor = () => { if (!canEditStore()) { alert('Only Super Admin and Owner may edit store products or settings.'); return false; } return true; };
+  const ensureSuperAdmin = () => { if (!isSuperAdmin()) { alert('Only the verified Super Admin can manage staff roles.'); return false; } return true; };
   const live = {
-    uid: null, verifiedAdmin: false, catalogPublished: false, db: null, auth: null,
+    uid: null, verifiedAdmin: false, activeRole: null, staffRecords: {}, catalogPublished: false, db: null, auth: null,
     applying: false, settingsReady: false, lastSettings: '', saveTimer: null,
     unsubs: [], started: false, profiles: {}, salesResetAt: 0,
     guestMessage: 'No confirmed cloud catalog yet. Sample collection shown for preview only.',
@@ -121,13 +127,13 @@
     async applySession(u) {
       const epoch=this.sessionEpoch=(this.sessionEpoch||0)+1;
       const prev=this.uid;
-      this.stopPrivate(); this.uid=null; this.appliedUserUID=null; this.verifiedAdmin=false;
+      this.stopPrivate(); this.uid=null; this.appliedUserUID=null; this.verifiedAdmin=false;this.activeRole=null;this.staffRecords={};
       this.settingsReady=false; this.lastSettings='';
       // NEVER show the previous account's cart or order data in a new session.
       cart=[]; wishlist=[]; orders=[]; currentUser=null; users=[];
       this.profiles={}; posTicket=[]; selectedAdminCustomerUID='';
       // Clear prior admin-only DOM when switching accounts (prevents stale private records).
-      for(const id of ['adminOrdersContainer','adminCustomersTableBody','adminOrderHistoryCount','adminCustomerSearchCount','custOrderList','custOrderCount','custProfContact','custProfName','trackingResultBox','shippingOrderSummary']) {
+      for(const id of ['adminOrdersContainer','adminCustomersTableBody','adminOrderHistoryCount','adminCustomerSearchCount','custOrderList','custOrderCount','custProfContact','custProfName','trackingResultBox','shippingOrderSummary','staffRoleTable','staffRoleStatus']) {
         const node=$(id);if(node)node.textContent='';
       }
       if($('adminOrderHistorySearch'))$('adminOrderHistorySearch').value='';
@@ -136,6 +142,7 @@
       $('staffLogoutNavBtn')?.classList.add('hidden');
       $('staffLoginNavBtn')?.classList.remove('hidden');
       $('cloudAdminQuickActions')?.classList.add('hidden');
+      document.querySelectorAll('[data-admin-restricted]').forEach(el=>el.classList.add('hidden'));
       if(!u) {
         this.uid=null;
         cart=JSON.parse(localStorage.getItem('mqb_v20_guest_cart')||'[]');
@@ -147,12 +154,37 @@
       // The admin record was manually created in Firebase; the client cannot create it.
       const adminSnap=await this.db.ref('admins/'+u.uid).once('value');
       if(this.uid!==u.uid || epoch!==this.sessionEpoch) return;
-      this.verifiedAdmin=adminSnap.val()===true;
+      const masterAdmin=adminSnap.val()===true;
+      const staffSnap=masterAdmin?null:await this.db.ref('staffRoles/'+u.uid).once('value').catch(()=>null); // V22 customer logins still work before V23 rules are published
+      if(this.uid!==u.uid || epoch!==this.sessionEpoch) return;
+      const staff=staffSnap?.val();
+      const staffRole=staff && staff.active===true && ['owner','manager'].includes(staff.role) ? staff.role : null;
+      if(staff && !staffRole) {
+        this.setStatus('Staff access is disabled. Contact your Super Admin.','bad');
+        await this.auth.signOut();return;
+      }
+      this.activeRole=masterAdmin?'admin':staffRole;
+      this.verifiedAdmin=!!this.activeRole;
       if(this.verifiedAdmin) {
-        currentUser={id:u.uid,uid:u.uid,username:'Admin',email:u.email,name:u.displayName||'Owner & Developer',role:'admin'};
+        currentUser={id:u.uid,uid:u.uid,username:u.email,email:u.email,
+          name:masterAdmin?(u.displayName||'Super Admin'):(staff.name||u.email),role:this.activeRole};
         $('staffLogoutNavBtn')?.classList.remove('hidden');
         $('staffLoginNavBtn')?.classList.add('hidden');
-        $('cloudAdminQuickActions')?.classList.remove('hidden');
+        $('cloudAdminQuickActions')?.classList.toggle('hidden', !canEditStore());
+        if(!masterAdmin){
+          // Revoke or demote access in all live sessions immediately after a role change.
+          this.on('staffRoles/'+u.uid, record=>{
+            if(this.uid!==u.uid)return;
+            if(!record||record.active!==true||!['owner','manager'].includes(record.role)){
+              this.setStatus('Your staff access has been revoked. Signing out.','bad');
+              this.auth.signOut().catch(()=>{});return;
+            }
+            if(currentUser && currentUser.role!==record.role){this.applySession(u).catch(()=>{});}
+          },()=>this.auth.signOut().catch(()=>{}));
+        } else {
+          this.on('staffRoles', records=>{this.staffRecords=records||{};renderStaffRoleTable();});
+        }
+        this.posSales=[];this.customerOrdersForAdmin=[];
         this.on('orderRequests', record=>{
           if(!isAdmin()) return;
           const all=[];
@@ -162,24 +194,28 @@
           this.customerOrdersForAdmin=all;
           this.updateAdminOrders();
         });
-        this.on('adminData/posSales', record=>{
-          this.posSales=Object.entries(record||{}).map(([key,v])=>({...v,__key:key,channel:'Showroom POS'}));
-          this.updateAdminOrders();
-        });
+        if(canEditStore()) {
+          this.on('adminData/posSales', record=>{
+            this.posSales=Object.entries(record||{}).map(([key,v])=>({...v,__key:key,channel:'Showroom POS'}));
+            this.updateAdminOrders();
+          });
+        }
         this.on('customerProfiles', record=>{this.profiles=record||{};renderAdminCustomers();renderAdminOrders();});
-        this.on('adminData/settings', data=>{
-          if(data && typeof data==='object') {
-            this.applying=true;
-            if(data.config) config={...config,...data.config,featureToggles:{...config.featureToggles,...data.config.featureToggles}};
-            if(Array.isArray(data.coupons)) coupons=data.coupons;
-            this.applying=false;
-            syncLiveCmsUI();renderProducts();renderCouponsTable();
-          }
-          this.settingsReady=true;
-          this.lastSettings=JSON.stringify(cleanSettings());
-        });
-        this.on('adminData/salesResetAt',data=>{this.salesResetAt=Number(data)||0;updateAnalytics();});
-        this.setStatus('✓ Firebase verified Super Admin · Shared store data online','ok');
+        if(canEditStore()){
+          this.on('adminData/settings', data=>{
+            if(data && typeof data==='object') {
+              this.applying=true;
+              if(data.config) config={...config,...data.config,featureToggles:{...config.featureToggles,...data.config.featureToggles}};
+              if(Array.isArray(data.coupons)) coupons=data.coupons;
+              this.applying=false;
+              syncLiveCmsUI();renderProducts();renderCouponsTable();
+            }
+            this.settingsReady=true;
+            this.lastSettings=JSON.stringify(cleanSettings());
+          });
+          this.on('adminData/salesResetAt',data=>{this.salesResetAt=Number(data)||0;updateAnalytics();});
+        }
+        this.setStatus('✓ Firebase verified '+(this.activeRole==='admin'?'Super Admin':this.activeRole==='owner'?'Owner':'Manager')+' · Shared store data online','ok');
       } else {
         currentUser={id:u.uid,uid:u.uid,username:u.email,email:u.email,phone:'',name:u.displayName||u.email||'Customer',role:'customer',addresses:[]};
         this.on('customerProfiles/'+u.uid, profile=>{
@@ -215,10 +251,86 @@
       const response=await this.auth.signInWithEmailAndPassword(email.trim(),password);
       if(adminOnly) {
         const snap=await this.db.ref('admins/'+response.user.uid).once('value');
-        if(snap.val()!==true) throw Error('This account is not authorized for the owner dashboard.');
+        let authorized=snap.val()===true;
+        if(!authorized){
+          const roleSnap=await this.db.ref('staffRoles/'+response.user.uid).once('value');
+          authorized=roleSnap.val()?.active===true && ['owner','manager'].includes(roleSnap.val()?.role);
+        }
+        if(!authorized) {
+          await this.auth.signOut();
+          throw Error('This email has no active Super Admin, Owner or Manager access.');
+        }
         await this.applySession(response.user);
       }
       return response;
+    },
+    async createStaff({name,email,role}) {
+      if(!isSuperAdmin()) throw Error('Only Super Admin can create staff accounts.');
+      name=String(name||'').trim();email=String(email||'').trim().toLowerCase();
+      if(name.length<2||name.length>120) throw Error('Staff name must have 2–120 characters.');
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254) throw Error('Enter a valid staff email address.');
+      if(!['owner','manager'].includes(role)) throw Error('Choose Owner or Manager.');
+      // Firebase secondary app prevents staff creation from signing out the Super Admin.
+      const appName='mqb-staff-provision-'+Date.now()+'-'+Math.random().toString(36).slice(2);
+      const secondary=firebase.initializeApp(FB,appName);
+      const secondaryAuth=secondary.auth();
+      let createdUser=null;let granted=false;
+      try {
+        const random=new Uint8Array(36);
+        crypto.getRandomValues(random);
+        const randomPassword='Aa1!'+Array.from(random,b=>b.toString(16).padStart(2,'0')).join('');
+        const account=await secondaryAuth.createUserWithEmailAndPassword(email,randomPassword);
+        createdUser=account.user;
+        const uid=account.user.uid;
+        await this.db.ref('staffRoles/'+uid).set({
+          name,email,role,active:true,createdBy:this.uid,
+          createdAt:firebase.database.ServerValue.TIMESTAMP,
+          updatedAt:firebase.database.ServerValue.TIMESTAMP
+        });
+        granted=true;
+        let resetSent=false;
+        try {await this.sendPasswordReset(email);resetSent=true;}catch(error){
+          this.setStatus('Staff created, but password setup email failed: '+textError(error),'bad');
+        }
+        return {uid,resetSent};
+      } catch(error) {
+        if(createdUser && !granted){
+          try{await createdUser.delete();}catch(_){}
+        }
+        if(error?.code==='auth/email-already-in-use') throw Error('This email already has a Firebase account. For safety, assign an existing account using its verified Firebase UID in the staff management section.');
+        throw error;
+      } finally {
+        try{await secondaryAuth.signOut();}catch(_){}
+        try{await secondary.delete();}catch(_){}
+      }
+    },
+    async assignExistingStaff({uid,name,email,role}){
+      if(!isSuperAdmin())throw Error('Super Admin access required.');
+      uid=String(uid||'').trim();name=String(name||'').trim();email=String(email||'').trim().toLowerCase();
+      if(!/^[A-Za-z0-9_-]{10,128}$/.test(uid))throw Error('Enter the actual Firebase Authentication UID.');
+      if(uid===this.uid)throw Error('Do not change the Super Admin account.');
+      if(name.length<2||name.length>120||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('Enter a valid staff name and email.');
+      if(!['owner','manager'].includes(role))throw Error('Invalid staff role.');
+      const admin=(await this.db.ref('admins/'+uid).once('value')).val();
+      if(admin===true)throw Error('Cannot overwrite another Super Admin.');
+      // Realtime Database rules cannot prove a typed UID matches a typed email.
+      // Super Admin must verify UID + email in Firebase Authentication first.
+      const old=(await this.db.ref('staffRoles/'+uid).once('value')).val();
+      await this.db.ref('staffRoles/'+uid).set({
+        ...old,name,email,role,active:true,
+        createdBy:old?.createdBy||this.uid,
+        createdAt:old?.createdAt||firebase.database.ServerValue.TIMESTAMP,
+        updatedAt:firebase.database.ServerValue.TIMESTAMP
+      });
+    },
+    async editStaffRole(uid,{role,active}){
+      if(!isSuperAdmin())throw Error('Super Admin access required.');
+      if(uid===this.uid)throw Error('Cannot modify your own Super Admin account.');
+      if(!['owner','manager'].includes(role)||typeof active!=='boolean')throw Error('Invalid staff role or status.');
+      const ref=this.db.ref('staffRoles/'+uid);
+      const snap=await ref.once('value');
+      if(!snap.exists())throw Error('Staff account not found.');
+      await ref.update({role,active,updatedAt:firebase.database.ServerValue.TIMESTAMP});
     },
     async sendPasswordReset(email) {
       if (!this.auth) throw Error('Firebase Authentication is unavailable. Please try again later.');
@@ -250,7 +362,7 @@
       else localStorage.setItem('mqb_v20_guest_wishlist',JSON.stringify(wishlist));
     },
     async saveProduct(product) {
-      if(!isAdmin()) throw Error('Firebase owner access required');
+      if(!canEditStore()) throw Error('Super Admin or Owner access required');
       const photo=safeImage(product.image);
       if(product.image && !photo) throw Error('Use an HTTPS product image URL, not a large embedded photo.');
       if(!product.title || price(product.salePrice)<=0 || !Number.isInteger(Number(product.stock)) || Number(product.stock)<0) throw Error('Check title, price and stock.');
@@ -265,7 +377,7 @@
       this.setStatus('✓ Product saved to Firebase. Devices updating…','ok');
     },
     async publishBrowserCatalog() {
-      if(!ensureAdmin()) return;
+      if(!ensureStoreEditor()) return;
       let data; try{data=JSON.parse(localStorage.getItem('mqb_v19_products')||'[]');}catch{data=[];}
       if(!Array.isArray(data)||!data.length) return alert('No legacy browser products found on this device.');
       if(!confirm('Import '+data.length+' previously saved browser products that do not exist in Firebase? Cloud products will not be overwritten.')) return;
@@ -277,7 +389,7 @@
       }catch(e){alert('Import failed: '+textError(e));}
     },
     async publishSampleCatalog() {
-      if(!ensureAdmin()) return;
+      if(!ensureStoreEditor()) return;
       if(!confirm('Import only missing products from data/products.json into Firebase? Existing cloud products and prices will be preserved. Check stock before accepting orders.')) return;
       try {
         const r=await fetch('data/products.json',{cache:'no-store'});
@@ -318,7 +430,7 @@
       return request;
     },
     maybePersistSettings() {
-      if(this.applying || !this.settingsReady || !isAdmin()) return;
+      if(this.applying || !this.settingsReady || !canEditStore()) return;
       const fingerprint=JSON.stringify(cleanSettings());
       if(fingerprint===this.lastSettings) return;
       clearTimeout(this.saveTimer);
@@ -408,7 +520,7 @@
     try {
       await live.signIn($('portalUsername').value.trim(),$('portalPassword').value,true);
       $('portalPassword').value='';closeAdminLoginModal();openAdminDashboardModal();
-    }catch(err) { alert('Owner login failed: '+textError(err)); if(errorEl){errorEl.textContent=textError(err);errorEl.classList.remove('hidden');} }
+    }catch(err) { alert('Staff login failed: '+textError(err)); if(errorEl){errorEl.textContent=textError(err);errorEl.classList.remove('hidden');} }
   };
   window.openAdminDashboardModal=(()=>{
     const original=window.openAdminDashboardModal;
@@ -420,7 +532,7 @@
   };
   window.openFirebaseSyncModal=()=>{
     const el=$('firebaseSyncModalStatus');
-    if(el) el.textContent=live.verifiedAdmin ? 'Firebase Super Admin connected. The API key is a public app identifier; no database secret is needed.' : 'Sign in as your verified Firebase Super Admin to manage the cloud database.';
+    if(el) el.textContent=canEditStore() ? 'Firebase authorized store administrator connected. No database secret is required.' : 'A verified Super Admin or Owner account is required for store settings.';
     $('firebaseSyncModal')?.classList.remove('hidden');
   };
   window.saveFirebaseSyncConfig=()=>alert('No database secret is required or accepted. Use Firebase email/password sign-in.');
@@ -560,7 +672,7 @@
 
   // --- Verified owner edit controls. Never write unconfirmed changes. ---
   window.handleProductFormSubmit=async e=>{
-    e.preventDefault();if(!ensureAdmin())return;
+    e.preventDefault();if(!ensureStoreEditor())return;
     const id=$('editProductId')?.value.trim()||live.db.ref('catalog').push().key;
     const before=products.find(p=>p.id===id);
     const input={...before,id,title:$('editProductTitle')?.value.trim(),
@@ -577,7 +689,7 @@
     catch(err){alert('Order status NOT saved: '+textError(err));}
   };
   window.resetAllSalesToZero=async()=>{
-    if(!ensureAdmin())return;
+    if(!ensureStoreEditor())return;
     if(!confirm('Reset dashboard sales starting today? Historic orders are retained for audit and records.'))return;
     try {await live.db.ref('adminData/salesResetAt').set(Date.now());alert('Sales dashboard baseline reset. Historic orders preserved.');}
     catch(err){alert('Sales reset failed: '+textError(err));}
@@ -772,7 +884,7 @@
   window.openManageUserModal=()=>alert('Passwords and user roles are managed in Firebase Authentication and by trusted server tools, not in the customer browser.');
   window.saveUserManagement=window.deleteUserAccount=()=>alert('Account changes are disabled here for safety. Use Firebase Authentication and a trusted admin backend.');
   window.downloadSystemBackup=()=>{
-    if(!ensureAdmin())return;
+    if(!ensureStoreEditor())return;
     const json=JSON.stringify({timestamp:new Date().toISOString(),note:'Browser snapshot only. Export the complete database from Firebase Console for an authoritative backup.',products,orders,config:cleanSettings().config},null,2);
     const blob=new Blob([json],{type:'application/json'});const u=URL.createObjectURL(blob);const a=document.createElement('a');
     a.href=u;a.download='mqb-owner-snapshot-'+Date.now()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),2000);
@@ -783,5 +895,110 @@
     alert('Photos must be hosted on HTTPS. Firebase Storage upload is not configured; paste a secure image URL instead.');
   };
   window.completePosSale=()=>alert('POS sale finalization needs a server-side stock and payment transaction. Do not mark unverified sales as paid.');
-  // Admin-only functions that change local UI state remain visible, but cannot grant Firebase permissions.
+  // --- V23: Staff roles, provisioning and staff dashboard access ---
+  const staffTabAllow={
+    admin:['hub','expert','features','orders','inventory','branches','shipping','pos','analytics','coupons','customers','salesmodifier','cms','payments','staff'],
+    owner:['hub','expert','orders','inventory','branches','shipping','pos','analytics','coupons','customers','cms','payments'],
+    manager:['hub','orders','inventory','shipping','analytics','customers']
+  };
+  window.renderStaffRoleTable=()=>{
+    const el=$('staffRoleTable');if(!el)return;
+    if(!isSuperAdmin()){el.textContent='Super Admin access required.';return;}
+    const entries=Object.entries(live.staffRecords||{}).sort(([,a],[,b])=>String(a.name||'').localeCompare(String(b.name||'')));
+    el.innerHTML=entries.length?entries.map(([uid,p])=>`<div class="p-3 border rounded-xl bg-white space-y-2" data-staff-row>
+      <div class="font-bold">${esc(p.name||'Staff')} <span class="text-xs text-neutral-500">${esc(p.active?'Active':'Disabled')}</span></div>
+      <div class="text-xs break-all">${esc(p.email||'')} · UID: ${esc(uid)}</div>
+      <div class="flex flex-wrap items-center gap-2">
+        <select class="staff-role-select border rounded p-2 text-xs" aria-label="Staff role">
+          <option value="manager" ${p.role==='manager'?'selected':''}>Manager</option>
+          <option value="owner" ${p.role==='owner'?'selected':''}>Owner</option>
+        </select>
+        <button type="button" class="staff-save-role rounded bg-emerald-900 text-white px-3 py-2 text-xs font-bold">Save Role</button>
+        <button type="button" class="staff-toggle-active rounded border px-3 py-2 text-xs font-bold">${p.active?'Disable Login':'Enable Login'}</button>
+        <button type="button" class="staff-reset-password rounded border px-3 py-2 text-xs">Email Password Reset</button>
+      </div>
+    </div>`).join(''):'<p class="text-sm text-neutral-600">No staff accounts assigned yet.</p>';
+    entries.forEach(([uid,staff],i)=>{
+      const row=el.querySelectorAll('[data-staff-row]')[i];
+      row.querySelector('.staff-save-role')?.addEventListener('click',async()=>{
+        if(!ensureSuperAdmin())return;
+        const role=row.querySelector('.staff-role-select').value;
+        if(!confirm('Change '+staff.name+' to '+role+'? Access permissions will change immediately.'))return;
+        try{await live.editStaffRole(uid,{role,active:staff.active===true});alert('Staff role updated in Firebase.');}
+        catch(e){alert('Role change failed: '+textError(e));}
+      });
+      row.querySelector('.staff-toggle-active')?.addEventListener('click',async()=>{
+        if(!ensureSuperAdmin())return;
+        const active=staff.active!==true;
+        if(!confirm((active?'Enable':'Disable')+' staff dashboard access for '+staff.name+'?'))return;
+        try{await live.editStaffRole(uid,{role:staff.role,active});alert('Staff access updated.');}
+        catch(e){alert('Update failed: '+textError(e));}
+      });
+      row.querySelector('.staff-reset-password')?.addEventListener('click',async()=>{
+        if(!ensureSuperAdmin())return;
+        if(!staff.email||!confirm('Send a reset email to '+staff.email+'?'))return;
+        try{await live.sendPasswordReset(staff.email);alert('Password setup/reset email requested.');}
+        catch(e){alert('Reset email failed: '+textError(e));}
+      });
+    });
+  };
+  window.handleCreateStaff=async e=>{
+    e.preventDefault();if(!ensureSuperAdmin())return;
+    const btn=$('staffCreateBtn');const notice=$('staffRoleStatus');
+    if(btn)btn.disabled=true;
+    try{
+      const result=await live.createStaff({
+        name:$('staffCreateName')?.value,
+        email:$('staffCreateEmail')?.value,
+        role:$('staffCreateRole')?.value
+      });
+      $('staffCreateForm')?.reset();
+      if(notice){notice.className='text-xs text-emerald-800';notice.textContent='Created Firebase staff account UID: '+result.uid+'. '+(result.resetSent?'Password setup email sent.':'Email could not be sent: ask staff to use Forgot Password on the login page.');}
+    }catch(error){if(notice){notice.className='text-xs text-red-700';notice.textContent='Could not create staff: '+textError(error);}}
+    finally{if(btn)btn.disabled=false;}
+  };
+  window.handleAssignExistingStaff=async e=>{
+    e.preventDefault();if(!ensureSuperAdmin())return;
+    const data={uid:$('staffExistingUid')?.value,name:$('staffExistingName')?.value,email:$('staffExistingEmail')?.value,role:$('staffExistingRole')?.value};
+    if(!confirm('I verified this exact UID and email belong to the intended staff member in Firebase Authentication. Assign '+data.role+' access?'))return;
+    try{await live.assignExistingStaff(data);$('staffExistingForm')?.reset();alert('Staff role assigned in Firebase.');}
+    catch(error){alert('Role assignment failed: '+textError(error));}
+  };
+  const applyStaffTabs=()=>{
+    const role=currentUser?.role||'';
+    const allowed=staffTabAllow[role]||[];
+    const tabs=['hub','expert','features','orders','inventory','branches','shipping','pos','analytics','coupons','customers','salesmodifier','cms','payments','staff'];
+    tabs.forEach(tab=>{
+      const btn=$('adminTabBtn-'+tab);
+      if(btn)btn.classList.toggle('hidden',!allowed.includes(tab));
+    });
+    // Managers may inspect inventory but cannot use edit controls.
+    if(role==='manager') $('adminInventoryTableBody')?.querySelectorAll('button').forEach(btn=>btn.classList.add('hidden'));
+    $('staffRoleTabHint')?.classList.toggle('hidden',role!=='admin');
+  };
+  const originalDashboard=window.openAdminDashboardModal;
+  window.openAdminDashboardModal=()=>{
+    if(!ensureAdmin())return;
+    originalDashboard();
+    applyStaffTabs();
+    const badge=$('portalRoleBadge');
+    if(badge)badge.textContent=currentUser.role==='admin'?'Verified Super Admin · Full Control':currentUser.role==='owner'?'Owner · Store Operations':'Manager · Orders & Shipping';
+  };
+  const originalTab=window.switchAdminTab;
+  window.switchAdminTab=tab=>{
+    if(!isAdmin() || !(staffTabAllow[currentUser.role]||[]).includes(tab))return;
+    originalTab(tab);
+  };
+  // Re-rendering inventory must not restore manager edit buttons.
+  const originalInventory=window.renderAdminInventory;
+  window.renderAdminInventory=()=>{originalInventory();applyStaffTabs();};
+  // Profile icon opens the correct dashboard for all verified staff roles.
+  window.handleUserIconClick=()=>{
+    if(currentUser && ['admin','owner','manager'].includes(currentUser.role)) openAdminDashboardModal();
+    else if(currentUser) openCustomerProfileModal();
+    else openCustomerAuthModal('login');
+  };
+  // All changes to the catalog, settings, roles and order records must also be
+  // enforced by the Firebase Realtime Database Security Rules shipped for review.
+  // Client-side hidden controls are not authorization.
 })();
