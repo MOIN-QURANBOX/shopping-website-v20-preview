@@ -1,0 +1,37 @@
+{
+  "brandName": "MOIN QURAN BOX",
+  "urduSubtitle": "معین قرآن باکس",
+  "proprietor": "Shaik Moin Uddin & Shaik Muneer Uddin",
+  "address": "Madina Colony, Falaknuma, Hyderabad, Telangana 500053",
+  "phone1": "7893961313",
+  "phone2": "7337464501",
+  "whatsappPhone": "7337464501",
+  "ownerEmail": "moinquranbox@gmail.com",
+  "gst": "TEL-HYD-500053",
+  "upiId": "7337464501@ybl",
+  "merchantName": "MOIN QURAN BOX",
+  "bankName": "State Bank of India",
+  "accountNum": "392810482910",
+  "ifsc": "SBIN0020145",
+  "announcement": "Holy Quran Direct Manufacturer • Free Packaging Across Hyderabad • COD & Instant UPI Available",
+  "heroHeadline": "Preserving The Divine Word With Sacred Grace",
+  "welcomeGreeting": "Assalamu Alaikum! Welcome to MOIN QURAN BOX — Hyderabad's premier manufacturer and stockist of Holy Quran-e-Majeed, velvet gift boxes, and authentic Islamic essentials.",
+  "branches": [
+    {
+      "id": "branch-1",
+      "name": "Branch 1 - Falaknuma Head Showroom",
+      "address": "Madina Colony, Near Engine Bowli, Falaknuma, Hyderabad, Telangana 500053",
+      "phone": "7893961313",
+      "manager": "Shaik Moin Uddin & Shaik Muneer Uddin",
+      "enabled": true
+    },
+    {
+      "id": "branch-2",
+      "name": "Branch 2 - Charminar Heritage Outlet",
+      "address": "Pathergatti Road, Near Medina Building, Charminar, Hyderabad, Telangana 500002",
+      "phone": "7337464501",
+      "manager": "Branch Manager (Owner 1)",
+      "enabled": true
+    }
+  ]
+}
