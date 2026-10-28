@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Moin Quran Box · Secure Realtime Sync Test</title>
+  <style>
+    :root{--green:#14382d;--gold:#c89b4f;--bg:#faf8f3;--ink:#24342b;--soft:#ecede5;--red:#a52b2b}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Arial,sans-serif}
+    header{background:var(--green);color:white;padding:25px max(18px,calc((100vw - 1020px)/2));}
+    header h1{margin:0;font-family:Georgia,serif;font-size:clamp(22px,4vw,36px)}header p{margin:7px 0 0;color:#e9d8b8}
+    main{max-width:1020px;margin:auto;padding:24px 16px 70px;display:grid;gap:18px}
+    .card{background:#fff;border:1px solid #e5e3db;border-radius:14px;padding:20px;box-shadow:0 5px 24px #122a190a}
+    .top{display:flex;gap:12px;justify-content:space-between;align-items:start;flex-wrap:wrap}h2{font-family:Georgia,serif;font-size:23px;margin:0 0 10px}h3{margin:8px 0}p{margin:5px 0 12px}
+    .hint{font-size:13px;color:#657267}.small{font-size:12px;color:#68776a}
+    .status{display:inline-flex;align-items:center;gap:8px;border-radius:20px;padding:6px 12px;background:#e8ecdb;color:#344e3b;font-weight:700;font-size:12px}.status.error{background:#ffe9e5;color:#aa2929}.status.good{background:#dff4e5;color:#1e6637}
+    .fieldgrid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));align-items:end}.field{display:flex;flex-direction:column;gap:5px;font-weight:650;font-size:13px}
+    input,textarea,select{font:inherit;width:100%;padding:11px 12px;border:1px solid #d5d5c9;border-radius:8px;background:white;color:inherit}textarea{min-height:76px;resize:vertical}button{font:inherit;font-weight:650;cursor:pointer;border:0;border-radius:8px;padding:11px 16px;background:var(--green);color:#fff}button:hover{filter:brightness(1.1)}button:disabled{cursor:not-allowed;opacity:.5}.secondary{background:#edf0e7;color:var(--ink);border:1px solid #d3d9cc}.warning{background:#fff4e1;color:#77521e;border-radius:8px;padding:11px 14px;font-size:13px}
+    .stack{display:grid;gap:12px}.hidden{display:none!important}.products{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}.product{border:1px solid #e4e5df;border-radius:12px;padding:12px;display:grid;gap:6px}.product img{width:100%;height:150px;border-radius:9px;object-fit:cover;background:#edeae3}.product strong{display:block}.price{font-weight:750;color:#1c4b38}.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.muted{color:#6c786f;font-size:13px}.feedback{min-height:24px;color:#365842;font-weight:600;white-space:pre-wrap}code{background:#f2f3eb;padding:1px 3px;border-radius:4px;overflow-wrap:anywhere}
+  </style>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js" defer></script>
+  <script src="realtime-test.js?v=1" defer></script>
+</head>
+<body>
+<header><h1>MOIN QURAN BOX</h1><p>Secure Realtime Database connection · Test page only</p></header>
+<main>
+  <section class="card top"><div><h2>Connection check</h2><p class="hint">Test the Firebase Authentication account and cross-device synchronization before changing your live storefront.</p></div><div id="status" class="status">Initializing…</div></section>
+  <section class="card"><h2>Public Islamic catalog</h2><p class="hint">Reads <code>/catalog</code> only. This does not expose customer records or private admin data. Products appear after an administrator adds them.</p><div id="catalog" class="products"><p class="muted">Loading catalog…</p></div></section>
+  <section class="card stack"><div class="top"><div><h2>Owner / Developer sign-in</h2><p class="hint">Sign in with the Firebase email/password account you already created. No database secret is needed.</p></div><button id="logout" class="secondary hidden" type="button">Sign out</button></div><form id="login" class="fieldgrid"><label class="field">Firebase account email <input name="email" type="email" autocomplete="username" required placeholder="you@example.com"></label><label class="field">Password <input name="password" type="password" autocomplete="current-password" required></label><button type="submit">Sign in securely</button></form><p id="identity" class="hint">Not signed in</p><p id="authMessage" class="feedback" aria-live="polite"></p></section>
+  <section id="adminPanel" class="card stack hidden"><div class="top"><div><h2>Verified Super Admin tools</h2><p class="hint">Visible only after Firebase confirms <code>/admins/your-uid === true</code>.</p></div><div class="status good">Administrator verified</div></div>
+    <div class="warning">This is a connectivity test, not a complete checkout or shipping backend. Do not treat unconfirmed customer requests as paid orders.</div>
+    <div><h3>1. Test immediate saving and desktop/mobile updates</h3><p class="hint">Use this test on your mobile and desktop after signing in on both. Both should show the same message.</p><form id="syncForm" class="fieldgrid"><label class="field">Test message<input id="syncInput" maxlength="120" placeholder="Hello from my mobile" required></label><button type="submit">Save to cloud</button></form><p class="hint">Latest message: <strong id="latestSync">Waiting for data</strong></p><p id="syncMessage" class="feedback" aria-live="polite"></p></div>
+    <hr style="width:100%;border:0;border-top:1px solid #eee">
+    <div><h3>2. Add a real product to the public catalog</h3><p class="hint">This test saves products in <code>/catalog</code> and updates all open devices in real time. Use your own product images (HTTPS link) if available.</p><form id="productForm" class="stack"><div class="fieldgrid"><label class="field">Product title<input name="title" required maxlength="120" placeholder="Quran with Velvet Box"></label><label class="field">Category<input name="category" required maxlength="70" placeholder="Quran Boxes & Rehal"></label><label class="field">Price (₹)<input name="price" type="number" min="1" max="10000000" step="0.01" required></label><label class="field">Available stock<input name="stock" type="number" min="0" max="100000" step="1" required></label></div><label class="field">Product photo HTTPS URL (optional)<input name="image" type="url" placeholder="https://example.com/product.jpg"></label><label class="field">Description (optional)<textarea name="description" maxlength="500"></textarea></label><div class="row"><button type="submit">Add product and sync</button><span class="small">Saved only after Firebase confirms success</span></div></form><p id="productMessage" class="feedback" aria-live="polite"></p></div>
+  </section>
+  <section class="card"><h2>Before using this in production</h2><p class="hint">Customer checkout, stock deductions, shipping fees, payments and role changes need server-side validation. This test page intentionally does not implement those operations.</p><p class="hint">The current V4 website uses Firestore. To migrate it to Realtime Database, the complete application and security rules must be adapted together. Do not use this test as a replacement for the live website.</p></section>
+</main>
+</body>
+</html>

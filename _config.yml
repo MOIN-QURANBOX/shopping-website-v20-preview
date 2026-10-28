@@ -1,0 +1,8 @@
+title: "MOIN QURAN BOX"
+description: "Luxury Islamic Store & Manufacturer Hyderabad"
+baseurl: "/shopping-website"
+url: "https://moin-quranbox.github.io"
+markdown: kramdown
+permalink: pretty
+exclude:
+  - README.md
