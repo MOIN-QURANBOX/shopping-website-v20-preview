@@ -599,8 +599,10 @@
           <p class="text-[10px] text-amber-300" id="portalRoleBadge">Authenticated Session</p>
         </div>
         <div class="flex items-center gap-2">
-          <button onclick="logoutCurrentUser()" class="bg-red-500/20 hover:bg-red-500/40 text-red-200 px-3 py-1 rounded text-xs font-bold uppercase">Exit</button>
-          <button onclick="closeAdminDashboardModal()" class="text-white">✕</button>
+          <button type="button" onclick="openStaffProfile()" class="bg-white/15 hover:bg-white/25 px-3 py-1 rounded text-xs font-bold">👤 Staff Profile</button>
+          <button type="button" onclick="closeAdminDashboardModal()" class="bg-white/15 hover:bg-white/25 px-3 py-1 rounded text-xs font-bold">Back to Store</button>
+          <button type="button" onclick="confirmStaffLogout()" class="bg-red-500/25 hover:bg-red-500/40 text-red-100 px-3 py-1 rounded text-xs font-bold">Log Out</button>
+          <button type="button" onclick="closeAdminDashboardModal()" class="text-white" aria-label="Close dashboard">✕</button>
         </div>
       </div>
 
@@ -739,6 +741,16 @@
             <h4 class="serif-title text-base font-bold text-brand-charcoal">Stock &amp; Pricing Inventory</h4>
             <button onclick="openProductEditModal(null)" class="bg-brand-darkgreen text-white px-3 py-1.5 rounded-lg text-xs font-bold uppercase">+ Add Product</button>
           </div>
+          <section class="bg-white rounded-xl border border-brand-border p-4 space-y-3" id="customCategorySection">
+            <h5 class="font-bold text-sm">Add / Edit Product Categories</h5>
+            <p class="text-xs text-neutral-600">Create your own categories. They will sync to the website and product dropdown. Existing categories and products are not removed.</p>
+            <form class="flex flex-wrap gap-2" onsubmit="handleAddProductCategory(event)">
+              <input id="newProductCategory" maxlength="60" placeholder="New category name" class="min-w-44 flex-1 border rounded p-2 text-sm" required>
+              <button type="submit" class="bg-brand-darkgreen text-white rounded px-4 py-2 text-xs font-bold">+ Add Category</button>
+            </form>
+            <div id="customCategoryList" class="space-y-2 text-xs"></div>
+            <p id="customCategoryNotice" role="status" class="text-xs"></p>
+          </section>
           <div class="bg-white rounded-xl border border-brand-border overflow-x-auto shadow-sm">
             <table class="w-full text-left text-xs">
               <thead class="bg-brand-sand uppercase tracking-wider text-brand-charcoal border-b border-brand-border">
@@ -846,7 +858,8 @@
                 <input type="text" id="posCustName" placeholder="Customer Name (optional)" class="w-full border rounded p-1.5 mt-2" />
                 <input type="tel" id="posCustPhone" placeholder="Mobile Number" class="w-full border rounded p-1.5 mt-1" />
                 <input type="text" id="posCustPincode" placeholder="Pincode (e.g. 500053)" class="w-full border rounded p-1.5 mt-1" />
-                <div id="posTicketItems" class="divide-y my-2 max-h-36 overflow-y-auto"></div>
+                <div class="flex justify-between items-center mt-2"><span class="font-bold">Items and quantities</span><button type="button" onclick="posClearTicket()" class="text-red-700 underline">Clear Bill</button></div>
+                <div id="posTicketItems" class="divide-y my-2 max-h-64 overflow-y-auto" aria-live="polite"></div>
               </div>
               <div class="border-t pt-2 space-y-2">
                 <div class="flex justify-between font-bold text-sm">
@@ -858,7 +871,10 @@
                   <option value="UPI">Showroom QR / UPI</option>
                   <option value="Card">Bank / Card</option>
                 </select>
-                <button onclick="completePosSale()" class="w-full py-2.5 bg-brand-darkgreen text-white font-bold uppercase rounded">Complete &amp; Print Bill</button>
+                <label class="flex gap-2 items-start text-[11px] text-neutral-700"><input id="posPaymentConfirmed" type="checkbox" class="mt-0.5"><span>I personally verified this cash, UPI bank credit, or card-terminal approval and checked the amount.</span></label>
+                <input id="posPaymentReference" type="text" maxlength="100" placeholder="Optional UPI / Card reference (not PIN)" class="w-full border rounded p-1.5" />
+                <button id="posCompleteBtn" type="button" onclick="completePosSale()" class="w-full py-2.5 bg-brand-darkgreen text-white font-bold uppercase rounded">Complete &amp; Print Bill</button>
+                <p class="text-[11px] text-amber-800">Requires the separately deployed secure Firebase POS backend. Never use customer-supplied totals for paid bills.</p>
               </div>
             </div>
           </div>
@@ -1048,6 +1064,40 @@
     </div>
   </div>
 
+  <!-- POS receipt: visible only after backend confirms stock and sale -->
+  <div id="posReceiptModal" class="hidden fixed inset-0 z-[80] modal-backdrop flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div class="bg-white rounded-xl border shadow-2xl max-w-lg w-full p-5 max-h-[90vh] overflow-auto">
+      <div id="posReceiptContent" class="text-sm space-y-1"></div>
+      <div id="posReceiptActions" class="mt-5 flex gap-2">
+        <button type="button" onclick="window.print()" class="bg-brand-darkgreen text-white px-4 py-2 rounded font-bold">🖨 Print Receipt</button>
+        <button type="button" onclick="closePosReceipt()" class="border px-4 py-2 rounded">Close</button>
+      </div>
+    </div>
+  </div>
+  <style>
+    @media print {
+      body * { visibility:hidden !important; }
+      #posReceiptContent, #posReceiptContent * { visibility:visible !important; }
+      #posReceiptContent { position:fixed; left:12mm; top:12mm; width:calc(100% - 24mm); color:black !important; font-family:Arial,sans-serif; }
+      #posReceiptContent h2{font-size:17pt;margin-bottom:12pt;}
+      #posReceiptModal { background:white !important; }
+    }
+  </style>
+  <!-- ================= STAFF PROFILE (does not log out) ================= -->
+  <div id="staffProfileModal" class="hidden fixed inset-0 z-[70] modal-backdrop flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="staffProfileTitle">
+    <div class="bg-white rounded-2xl shadow-2xl border p-5 max-w-md w-full space-y-4">
+      <div class="flex justify-between items-center"><h3 id="staffProfileTitle" class="font-bold text-lg">Staff Profile</h3><button type="button" onclick="closeStaffProfile()" aria-label="Close staff profile">✕</button></div>
+      <dl class="text-sm space-y-2"><div><dt class="text-neutral-500">Full name</dt><dd id="staffProfileName" class="font-bold break-words"></dd></div>
+      <div><dt class="text-neutral-500">Role</dt><dd id="staffProfileRole" class="font-bold"></dd></div>
+      <div><dt class="text-neutral-500">Email</dt><dd id="staffProfileEmail" class="break-words"></dd></div>
+      <div><dt class="text-neutral-500">Firebase account UID</dt><dd id="staffProfileUID" class="break-all font-mono text-xs"></dd></div></dl>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" onclick="closeStaffProfile()" class="bg-brand-darkgreen text-white rounded px-4 py-2 font-bold text-sm">Back to Dashboard</button>
+        <button type="button" onclick="confirmStaffLogout()" class="bg-red-100 text-red-800 rounded px-4 py-2 font-bold text-sm">Log Out</button>
+      </div>
+      <p class="text-xs text-neutral-600">Closing this profile or dashboard will keep you signed in. Only Log Out ends your session.</p>
+    </div>
+  </div>
   <!-- ================= PRODUCT EDIT MODAL ================= -->
   <div id="productEditModal" class="hidden fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4">
     <div class="bg-white border border-brand-border rounded-2xl shadow-2xl max-w-md w-full p-5 relative text-xs">
@@ -1341,6 +1391,7 @@
   <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions-compat.js"></script>
   <!-- Preserve the original storefront and 30+ features; secure Firebase overrides follow -->
   <script defer src="js/app.js"></script>
   <script defer src="js/order-invoice-pdf.js"></script>
