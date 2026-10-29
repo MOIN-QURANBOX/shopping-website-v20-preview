@@ -61,9 +61,9 @@
           <span id="staffSessionTimerBadge" class="hidden text-[10px] bg-amber-500/20 text-amber-300 font-mono px-2 py-0.5 rounded border border-amber-400/30">
             ⏱️ Session: 24:00:00
           </span>
-          <button onclick="openAdminLoginModal()" class="text-[10px] sm:text-[11px] font-bold text-amber-300 bg-[#234234] hover:bg-neutral-800 px-2.5 py-1 rounded transition flex items-center gap-1 border border-amber-400/40">
-            🔐 Staff Login
-          </button>
+          <button id="staffLoginNavBtn" type="button" onclick="openStaffPortal()" class="text-[10px] sm:text-[11px] font-bold text-amber-300 bg-[#234234] hover:bg-neutral-800 px-2.5 py-1 rounded transition border border-amber-400/40">🔐 Staff Login</button>
+          <button id="staffDashboardNavBtn" type="button" onclick="openStaffPortal()" class="hidden text-[10px] sm:text-[11px] font-bold text-amber-300 bg-[#234234] hover:bg-neutral-800 px-2.5 py-1 rounded transition border border-amber-400/40">🏪 Staff Dashboard</button>
+          <button id="staffLogoutNavBtn" type="button" onclick="confirmStaffLogout()" class="hidden text-[10px] sm:text-[11px] font-bold text-white bg-red-800 hover:bg-red-700 px-2.5 py-1 rounded transition border border-red-300/30">Log Out</button>
           <button onclick="openInvoiceLookupModal()" class="text-[10px] sm:text-[11px] font-semibold text-neutral-300 hover:text-white transition underline whitespace-nowrap">
             📄 Invoice
           </button>
@@ -306,7 +306,7 @@
           <li><button onclick="openCustomerAuthModal('login')" class="hover:text-brand-gold">Customer Login / Register</button></li>
           <li><button onclick="openInvoiceLookupModal()" class="hover:text-brand-gold">Download Official Invoice</button></li>
           <li><button onclick="openTrackingModal()" class="hover:text-brand-gold">Courier Shipment Track</button></li>
-          <li><button onclick="openAdminLoginModal()" class="text-brand-gold font-bold hover:underline">Staff Portal (Admin / Owners)</button></li>
+          <li><button onclick="openStaffPortal()" class="text-brand-gold font-bold hover:underline">Staff Portal (Admin / Owners)</button></li>
         </ul>
       </div>
     </div>
@@ -348,7 +348,7 @@
         <button onclick="openCustomerAuthModal('login'); toggleDrawer(false);" class="w-full py-2 bg-brand-charcoal text-white text-xs font-bold uppercase rounded">
           Customer Account Login
         </button>
-        <button onclick="openAdminLoginModal(); toggleDrawer(false);" class="w-full py-2 bg-brand-darkgreen text-white text-xs font-bold uppercase rounded">
+        <button onclick="openStaffPortal(); toggleDrawer(false);" class="w-full py-2 bg-brand-darkgreen text-white text-xs font-bold uppercase rounded">
           Staff Portal (Admin / Owners)
         </button>
       </div>
@@ -600,9 +600,9 @@
         </div>
         <div class="flex items-center gap-2">
           <button type="button" onclick="openStaffProfile()" class="bg-white/15 hover:bg-white/25 px-3 py-1 rounded text-xs font-bold">👤 Staff Profile</button>
-          <button type="button" onclick="closeAdminDashboardModal()" class="bg-white/15 hover:bg-white/25 px-3 py-1 rounded text-xs font-bold">Back to Store</button>
+          <button type="button" onclick="backToStoreWithoutLogout()" class="bg-white/15 hover:bg-white/25 px-3 py-1 rounded text-xs font-bold">Back to Store</button>
           <button type="button" onclick="confirmStaffLogout()" class="bg-red-500/25 hover:bg-red-500/40 text-red-100 px-3 py-1 rounded text-xs font-bold">Log Out</button>
-          <button type="button" onclick="closeAdminDashboardModal()" class="text-white" aria-label="Close dashboard">✕</button>
+          <button type="button" onclick="backToStoreWithoutLogout()" class="text-white" aria-label="Close dashboard">✕</button>
         </div>
       </div>
 
@@ -858,7 +858,12 @@
                 <input type="text" id="posCustName" placeholder="Customer Name (optional)" class="w-full border rounded p-1.5 mt-2" />
                 <input type="tel" id="posCustPhone" placeholder="Mobile Number" class="w-full border rounded p-1.5 mt-1" />
                 <input type="text" id="posCustPincode" placeholder="Pincode (e.g. 500053)" class="w-full border rounded p-1.5 mt-1" />
-                <div class="flex justify-between items-center mt-2"><span class="font-bold">Items and quantities</span><button type="button" onclick="posClearTicket()" class="text-red-700 underline">Clear Bill</button></div>
+                <div class="flex flex-wrap justify-between items-center gap-2 mt-2"><span class="font-bold">Items and quantities</span><span id="posItemCount" class="text-[10px] text-neutral-500">0 items in bill</span></div>
+                <p class="text-[11px] text-neutral-600">Select the checkbox beside the incorrect product, then tap Remove Selected Item. You can also tap ✕ Remove Item on its own row.</p>
+                <div class="flex flex-wrap gap-2">
+                  <button id="posRemoveSelectedBtn" type="button" onclick="posRemoveSelectedItem()" disabled class="opacity-50 rounded border border-red-300 bg-red-50 text-red-800 px-3 py-2 font-bold">✕ Remove Selected Item</button>
+                  <button type="button" onclick="posClearTicket()" class="rounded border border-neutral-300 px-3 py-2 text-red-700 font-semibold">Clear Entire Bill</button>
+                </div>
                 <div id="posTicketItems" class="divide-y my-2 max-h-64 overflow-y-auto" aria-live="polite"></div>
               </div>
               <div class="border-t pt-2 space-y-2">
