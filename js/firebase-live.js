@@ -59,6 +59,11 @@
   const ensureAdmin = () => { if (!canManageOrders()) { alert('Sign in as verified Super Admin, Owner or Manager staff.'); return false; } return true; };
   const ensureStoreEditor = () => { if (!canEditStore()) { alert('Only Super Admin and Owner may edit store products or settings.'); return false; } return true; };
   const ensureSuperAdmin = () => { if (!isSuperAdmin()) { alert('Only the verified Super Admin can manage staff roles.'); return false; } return true; };
+  const syncStaffNavigation = signedIn => {
+    $('staffLoginNavBtn')?.classList.toggle('hidden',!!signedIn);
+    $('staffDashboardNavBtn')?.classList.toggle('hidden',!signedIn);
+    $('staffLogoutNavBtn')?.classList.toggle('hidden',!signedIn);
+  };
   const live = {
     uid: null, verifiedAdmin: false, activeRole: null, staffRecords: {}, catalogPublished: false, db: null, auth: null,
     applying: false, settingsReady: false, lastSettings: '', saveTimer: null,
@@ -151,8 +156,7 @@
       if($('adminOrderHistorySearch'))$('adminOrderHistorySearch').value='';
       if($('adminCustomerSearch'))$('adminCustomerSearch').value='';
       closeAdminDashboardModal(); closeCustomerProfileModal();
-      $('staffLogoutNavBtn')?.classList.add('hidden');
-      $('staffLoginNavBtn')?.classList.remove('hidden');
+      syncStaffNavigation(false);
       $('cloudAdminQuickActions')?.classList.add('hidden');
       document.querySelectorAll('[data-admin-restricted]').forEach(el=>el.classList.add('hidden'));
       if(!u) {
@@ -180,8 +184,7 @@
       if(this.verifiedAdmin) {
         currentUser={id:u.uid,uid:u.uid,username:u.email,email:u.email,
           name:masterAdmin?(u.displayName||'Super Admin'):(staff.name||u.email),role:this.activeRole};
-        $('staffLogoutNavBtn')?.classList.remove('hidden');
-        $('staffLoginNavBtn')?.classList.add('hidden');
+        syncStaffNavigation(true);
         $('cloudAdminQuickActions')?.classList.toggle('hidden', !canEditStore());
         if(!masterAdmin){
           // Revoke or demote access in all live sessions immediately after a role change.
@@ -570,8 +573,17 @@
     return ()=>{ if(!ensureAdmin()) return; original(); };
   })();
   window.logoutCurrentUser=async()=>{
-    try { await live.signOut(); closeAdminDashboardModal();closeCustomerProfileModal(); }
-    catch(e) { alert('Logout failed: '+textError(e)); }
+    try {
+      await live.signOut();
+      // Update the UI immediately; don't depend on an asynchronous auth callback.
+      // This is a UI reset only, not a database write.
+      if(!live.auth?.currentUser) await live.applySession(null);
+      closeAdminDashboardModal();closeCustomerProfileModal();closeAdminLoginModal();
+      $('staffProfileModal')?.classList.add('hidden');
+      syncStaffNavigation(false);
+      live.setStatus('✓ Signed out. Your staff session has ended.','ok');
+      return true;
+    } catch(e) { alert('Logout failed: '+textError(e)); return false; }
   };
   window.openFirebaseSyncModal=()=>{
     const el=$('firebaseSyncModalStatus');
@@ -1187,6 +1199,19 @@
     catch(e){categoryStatus(textError(e),true);}
   };
 
+  // V25.1: Opening the staff portal while signed in must reopen the dashboard,
+  // not display another password form (which looked like an automatic logout).
+  window.openStaffPortal=()=>{
+    if(isAdmin()){
+      closeAdminLoginModal();
+      window.openAdminDashboardModal();
+    }else openAdminLoginModal();
+  };
+  window.backToStoreWithoutLogout=()=>{
+    window.closeStaffProfile?.();
+    closeAdminDashboardModal();
+    syncStaffNavigation(isAdmin());
+  };
   // V25: a staff session does not end when the dashboard or profile is closed.
   window.openStaffProfile=()=>{
     if(!isAdmin())return alert('Sign in as staff first.');
@@ -1199,10 +1224,9 @@
   window.closeStaffProfile=()=>{$('staffProfileModal')?.classList.add('hidden');};
   window.confirmStaffLogout=async()=>{
     if(!confirm('Log out of your staff account? Closing the dashboard does not log you out.'))return;
-    window.closeStaffProfile();await window.logoutCurrentUser();
+    const success=await window.logoutCurrentUser();
+    if(success) alert('Staff account signed out successfully.');
   };
-  const priorLogout=window.logoutCurrentUser;
-  window.logoutCurrentUser=async()=>{window.closeStaffProfile();await priorLogout();};
   // Reopening the dashboard after returning to the storefront uses the active login.
 
   // V25: POS finalization runs ONLY through a trusted, deployed Cloud Function.
