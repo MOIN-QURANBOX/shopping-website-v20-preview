@@ -274,15 +274,33 @@ function handleSendMessageToOwner(e) {
 // 3. STOREFRONT & PRODUCTS RENDERERS
 // ==========================================
 const CATEGORIES = ["All", "Tarjuma Qurans", "Quran Boxes & Rehal", "Janamaz", "Hajj & Umrah", "Namaz Caps & Tasbih"];
-
+function storeCategories() {
+  const extras=Array.isArray(config.customCategories)?config.customCategories:[];
+  const used=products.map(p=>p.category).filter(Boolean);
+  return [...new Set([...CATEGORIES, ...extras, ...used].filter(x=>typeof x==='string' && x.trim()))];
+}
 function renderCategoryChips() {
-  const container = document.getElementById("categoryChips");
-  if (!container) return;
-  container.innerHTML = CATEGORIES.map(cat => `
-    <button onclick="filterCategory('${cat}')" class="px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition ${currentCategory === cat ? 'bg-brand-charcoal text-white shadow' : 'bg-white text-brand-charcoal border border-brand-border hover:bg-neutral-100'}">
-      ${cat}
-    </button>
-  `).join("");
+  const container=document.getElementById('categoryChips');if(!container)return;
+  container.replaceChildren();
+  for(const cat of storeCategories()) {
+    const b=document.createElement('button');
+    b.type='button'; b.textContent=cat;
+    b.className='px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition '+
+      (currentCategory===cat?'bg-brand-charcoal text-white shadow':'bg-white text-brand-charcoal border border-brand-border hover:bg-neutral-100');
+    b.addEventListener('click',()=>filterCategory(cat));container.appendChild(b);
+  }
+}
+function refreshProductCategoryOptions(selected) {
+  const select=document.getElementById('editProductCategory');if(!select)return;
+  const value=selected ?? select.value;
+  select.replaceChildren();
+  for(const cat of storeCategories().filter(c=>c!=='All')){
+    const option=document.createElement('option');option.value=cat;option.textContent=cat;select.appendChild(option);
+  }
+  if(value && ![...select.options].some(o=>o.value===value)){
+    const opt=new Option(value,value);select.add(opt);
+  }
+  if(value)select.value=value;
 }
 
 function filterCategory(cat) {
@@ -1014,6 +1032,7 @@ function openProductEditModal(id = null) {
   document.getElementById("productEditModal")?.classList.remove("hidden");
   
   const p = products.find(x => x.id === id);
+  refreshProductCategoryOptions(p?.category);
   if (p) {
     document.getElementById("editProductId").value = p.id;
     document.getElementById("editProductTitle").value = p.title;
@@ -1194,29 +1213,55 @@ function renderPosCatalog() {
 }
 
 function posAddToCart(prodId) {
-  const p = products.find(x => x.id === prodId);
-  if (!p || p.stock <= 0) return alert("Product out of stock.");
-  const exist = posTicket.find(x => x.id === prodId);
-  if (exist) exist.qty += 1;
-  else posTicket.push({ id: p.id, title: p.title, salePrice: p.salePrice, qty: 1 });
+  if(window.mqbPosBusy)return;
+  const p=products.find(x=>x.id===prodId);
+  if(!p||Number(p.stock)<=0)return alert('Product out of stock.');
+  const existing=posTicket.find(x=>x.id===prodId);
+  if(existing){if(existing.qty>=Number(p.stock))return alert('Cannot exceed available stock.');existing.qty++;}
+  else posTicket.push({id:p.id,title:p.title,salePrice:p.salePrice,qty:1});
   renderPosTicketUI();
 }
-
-function renderPosTicketUI() {
-  const container = document.getElementById("posTicketItems");
-  const totalEl = document.getElementById("posTicketTotal");
-  if (!container || !totalEl) return;
-  const total = posTicket.reduce((s, it) => s + (it.salePrice * it.qty), 0);
-  totalEl.textContent = formatPrice(total);
-  container.innerHTML = posTicket.map(it => `
-    <div class="py-1 flex justify-between items-center text-xs">
-      <span>${it.title} (x${it.qty})</span>
-      <span class="font-mono font-bold">${formatPrice(it.salePrice * it.qty)}</span>
-    </div>
-  `).join("");
+function posSetQuantity(prodId,quantity) {
+  if(window.mqbPosBusy)return;
+  const line=posTicket.find(x=>x.id===prodId);
+  if(!line)return;
+  const product=products.find(x=>x.id===prodId);
+  if(!product){alert('This product is no longer available.');return;}
+  const value=Number(quantity);
+  if(!Number.isInteger(value)||value<0){alert('Enter a whole quantity of zero or more.');renderPosTicketUI();return;}
+  if(value>Number(product.stock)){alert('Only '+product.stock+' currently available.');renderPosTicketUI();return;}
+  if(value===0)posTicket=posTicket.filter(x=>x.id!==prodId);
+  else line.qty=value;
+  renderPosTicketUI();
 }
-
-function completePosSale(){alert("POS payment confirmation requires a trusted backend.");}
+function posChangeQuantity(prodId,delta){const line=posTicket.find(x=>x.id===prodId);if(line)posSetQuantity(prodId,line.qty+delta);}
+function posRemoveItem(prodId){if(window.mqbPosBusy)return;posTicket=posTicket.filter(x=>x.id!==prodId);renderPosTicketUI();}
+function posClearTicket(){if(window.mqbPosBusy)return;if(posTicket.length && !confirm('Clear all items from this POS bill?'))return;posTicket=[];renderPosTicketUI();}
+function renderPosTicketUI() {
+  const container=document.getElementById('posTicketItems'),totalEl=document.getElementById('posTicketTotal');
+  if(!container||!totalEl)return;
+  const total=posTicket.reduce((sum,it)=>sum+(Number(it.salePrice)||0)*it.qty,0);
+  totalEl.textContent=formatPrice(total);
+  container.replaceChildren();
+  if(!posTicket.length){const empty=document.createElement('p');empty.className='py-3 text-neutral-500';empty.textContent='No items yet. Select products to build a bill.';container.appendChild(empty);return;}
+  for(const it of posTicket){
+    const row=document.createElement('div');row.className='py-2 border-b space-y-1';
+    const heading=document.createElement('div');heading.className='flex justify-between items-start gap-2';
+    const name=document.createElement('span');name.className='font-semibold break-words';name.textContent=it.title;
+    const subtotal=document.createElement('strong');subtotal.className='whitespace-nowrap';subtotal.textContent=formatPrice(it.salePrice*it.qty);
+    heading.append(name,subtotal);
+    const ctrls=document.createElement('div');ctrls.className='flex items-center gap-1.5';
+    const btn=(text,label,callback,extra='')=>{const b=document.createElement('button');b.type='button';b.textContent=text;b.setAttribute('aria-label',label);b.className='rounded border px-2 py-1 font-bold '+extra;b.addEventListener('click',callback);return b;};
+    const qty=document.createElement('input');qty.type='number';qty.min='0';qty.max=String(products.find(x=>x.id===it.id)?.stock??it.qty);qty.step='1';qty.value=String(it.qty);
+    qty.setAttribute('aria-label','Quantity for '+it.title);qty.className='w-16 border rounded p-1 text-center';
+    qty.addEventListener('change',()=>posSetQuantity(it.id,qty.value));
+    ctrls.append(btn('−','Decrease '+it.title,()=>posChangeQuantity(it.id,-1)),qty,
+      btn('+','Increase '+it.title,()=>posChangeQuantity(it.id,1)),
+      btn('Remove','Remove '+it.title,()=>posRemoveItem(it.id),'ml-auto text-red-700'));
+    row.append(heading,ctrls);container.appendChild(row);
+  }
+}
+function completePosSale(){alert('Secure POS server function is not yet deployed. Do not complete paid sales in the browser.');}
 
 function formatFeatureName(key) {
   return key
