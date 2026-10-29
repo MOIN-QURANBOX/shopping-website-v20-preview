@@ -55,7 +55,7 @@
       <div class="max-w-6xl mx-auto flex items-center justify-between gap-2">
         <div class="flex items-center gap-2 overflow-hidden mx-auto text-center truncate font-medium">
           <span class="inline-block px-1.5 py-0.5 bg-[#254234] rounded text-[9px] uppercase tracking-wider font-bold text-amber-300">Live</span>
-          <span id="announcementText" class="truncate text-[11px] sm:text-xs">Holy Quran Direct Manufacturer • Free Packaging Across Hyderabad • COD &amp; Instant UPI Available</span>
+          <span id="announcementText" class="truncate text-[11px] sm:text-xs">Holy Quran Direct Manufacturer • Free Packaging Across Hyderabad • COD &amp; Manual UPI After Confirmation</span>
         </div>
         <div class="flex items-center gap-2 shrink-0">
           <span id="staffSessionTimerBadge" class="hidden text-[10px] bg-amber-500/20 text-amber-300 font-mono px-2 py-0.5 rounded border border-amber-400/30">
@@ -512,6 +512,36 @@
         </div>
         <div class="text-right"><button type="button" onclick="openPasswordResetModal('admin')" class="text-emerald-800 text-xs font-bold underline underline-offset-2">Forgot staff password?</button></div>
         <button type="submit" class="w-full py-2.5 bg-brand-darkgreen text-white font-bold uppercase rounded-lg">Unlock Dashboard</button>
+      </form>
+    </div>
+  </div>
+
+
+  <!-- ================= MANUAL PAYMENT VERIFICATION (SUPER ADMIN) ================= -->
+  <div id="orderPaymentModal" class="hidden fixed inset-0 z-[75] modal-backdrop flex items-center justify-center p-3" role="dialog" aria-modal="true" aria-labelledby="paymentModalTitle">
+    <div class="bg-white border border-brand-border rounded-2xl shadow-2xl max-w-xl w-full max-h-[94vh] overflow-y-auto p-5 sm:p-6 relative text-xs space-y-3">
+      <button type="button" onclick="closeOrderPaymentModal()" class="absolute right-4 top-4 text-neutral-500 text-lg" aria-label="Close payment editor">✕</button>
+      <h3 id="paymentModalTitle" class="serif-title text-lg font-bold text-brand-charcoal pr-8">Verify Manual Payment</h3>
+      <p class="text-amber-900 bg-amber-50 border border-amber-300 rounded-lg p-3">Only Super Admin may confirm receipts. Check stock, actual prices, shipping charges and the receiving bank statement or collected COD cash yourself. Customer claims, screenshots, browser totals and UPI reference numbers alone are NOT payment evidence.</p>
+      <div id="paymentOrderSummary" class="bg-brand-sand rounded-lg p-3 font-mono break-all"></div>
+      <form onsubmit="saveManualPaymentVerification(event)" class="space-y-3">
+        <div><label for="paymentMethodVerified" class="block font-bold mb-1">Actual payment method</label>
+          <select id="paymentMethodVerified" class="w-full border rounded bg-brand-sand p-2.5" required>
+            <option value="Manual UPI">Manual UPI (bank credit verified)</option>
+            <option value="COD">COD (cash actually collected)</option>
+          </select></div>
+        <div><label for="paymentVerifiedAmount" class="block font-bold mb-1">Amount confirmed from actual prices and receipt (INR)</label>
+          <input id="paymentVerifiedAmount" type="number" min="0.01" max="99999999" step="0.01" class="w-full border rounded bg-brand-sand p-2.5" required /></div>
+        <div><label for="paymentUtr" class="block font-bold mb-1">UPI reference / UTR (required for verified UPI)</label>
+          <input id="paymentUtr" type="text" maxlength="64" placeholder="Enter the reference from your bank statement" class="w-full border rounded bg-brand-sand p-2.5" /></div>
+        <div><label for="paymentAdminNote" class="block font-bold mb-1">Internal payment note (optional; customers may see the recorded receipt status)</label>
+          <textarea id="paymentAdminNote" maxlength="240" rows="2" class="w-full border rounded bg-brand-sand p-2.5" placeholder="Verification reference or reason for correction; never enter passwords, OTPs or bank credentials"></textarea></div>
+        <label class="flex items-start gap-2 p-2 border rounded bg-white"><input id="paymentReceivedChecked" type="checkbox" class="mt-0.5" /><span>I personally checked the final amount AND the receiving bank credit (UPI), or physically received the cash (COD). I understand this is a manual confirmation.</span></label>
+        <div id="paymentSaveMessage" role="status" aria-live="polite" class="hidden rounded-lg p-2"></div>
+        <div class="flex flex-wrap gap-2">
+          <button id="paymentVerifyBtn" type="submit" class="flex-1 bg-brand-darkgreen text-white rounded-lg px-4 py-3 font-bold">Save Verified Payment</button>
+          <button type="button" onclick="resetManualPaymentVerification()" class="border border-amber-500 text-amber-900 rounded-lg px-4 py-2 font-semibold">Revert to Unverified</button>
+        </div>
       </form>
     </div>
   </div>
@@ -1105,8 +1135,8 @@
           <label class="block font-semibold mb-1">Payment Type</label>
           <div class="grid grid-cols-2 gap-2">
             <label class="p-2 border rounded-lg bg-white flex items-center gap-2 cursor-pointer">
-              <input type="radio" name="chkPaymentMethod" value="To be arranged" checked />
-              <span>Payment after confirmation</span>
+              <input type="radio" name="chkPaymentMethod" value="Manual UPI" checked />
+              <span>Manual UPI — pay only after owner confirms amount</span>
             </label>
             <label class="p-2 border rounded-lg bg-white flex items-center gap-2 cursor-pointer">
               <input type="radio" name="chkPaymentMethod" value="COD" />
@@ -1118,15 +1148,18 @@
           <label class="block font-semibold mb-1">Discount Coupon Code (Optional)</label>
           <input type="text" id="chkCouponInput" placeholder="e.g. RAMADAN50" class="w-full bg-brand-sand border rounded-lg p-2 font-mono uppercase" />
         </div>
-        <div class="p-3 bg-brand-sand border rounded-lg">
-          <span class="font-bold text-brand-forest">Payment details (not a payment gateway)</span>
-          <p class="text-[11px] text-brand-muted mt-1">UPI ID: <strong class="select-all text-brand-dark" id="displayCheckoutUpi">7337464501@ybl</strong></p>
+        <div class="p-3 bg-amber-50 border border-amber-300 rounded-lg space-y-1">
+          <strong class="text-amber-900">Payment is NOT collected at checkout</strong>
+          <p class="text-[11px] text-amber-900">For manual UPI: submit an order request, wait for the owner to confirm the final price, stock, shipping and official UPI details, then pay. Send the transaction reference to the owner. A screenshot alone is not payment proof.</p>
+          <p class="text-[11px] text-amber-900">For COD: pay only on delivery. No advance payment is required by this checkout.</p>
+          <p class="text-[11px] text-brand-muted">The store UPI ID is managed by Super Admin; confirm it directly with the store before making a transfer.</p>
+          <strong class="hidden" id="displayCheckoutUpi"></strong>
         </div>
         <div class="flex justify-between items-center text-sm font-bold pt-2 border-t">
           <span>Estimated subtotal:</span>
           <span id="checkoutTotalAmount" class="serif-title text-base text-brand-gold">₹0.00</span>
         </div>
-        <button type="submit" class="w-full py-3 bg-brand-charcoal hover:bg-black text-white font-bold uppercase rounded-lg transition">Confirm Order</button>
+        <button type="submit" class="w-full py-3 bg-brand-charcoal hover:bg-black text-white font-bold uppercase rounded-lg transition">Submit Order Request (No Payment)</button>
       </form>
     </div>
   </div>
@@ -1135,7 +1168,7 @@
   <div id="orderSuccessModal" class="hidden fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4">
     <div class="bg-white border border-brand-border rounded-2xl shadow-2xl max-w-md w-full p-6 text-center space-y-4">
       <div class="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-2xl font-bold">✓</div>
-      <h3 class="serif-title text-xl font-bold text-brand-charcoal">Alhamdulillah! Order Placed</h3>
+      <h3 class="serif-title text-xl font-bold text-brand-charcoal">Alhamdulillah! Order Request Submitted</h3>
       <div class="bg-brand-sand p-3 rounded-xl border text-xs">
         <span class="text-brand-muted block">Tracking Order ID</span>
         <div id="successOrderIdDisplay" class="font-mono text-base font-bold text-brand-charcoal select-all">MQB-2026-0000</div>
