@@ -98,7 +98,9 @@
       }
       try {
         const app=firebase.apps.length ? firebase.app() : firebase.initializeApp(FB);
-        this.db=app.database(); this.auth=app.auth();
+        this.db=app.database();         this.auth=app.auth();
+        // Keep signed-in staff sessions across refreshes until they explicitly log out.
+        this.auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>console.warn('Firebase persistence unavailable:',e?.code||e));
         this.setStatus('Connecting to live Islamic catalog…');
         this.on('catalog', data => {
           const entries=Object.entries(data || {});
@@ -124,6 +126,8 @@
         this.on('publicSettings', data => {
           if(!data || typeof data!=='object') return;
           for(const k of publicKeys) if(Object.prototype.hasOwnProperty.call(data,k)) config[k]=data[k];
+          config.customCategories=Array.isArray(data.customCategories) ? data.customCategories.filter(x=>typeof x==='string').slice(0,75) : [];
+          renderCategoryChips();refreshProductCategoryOptions();renderCustomCategoryList();
           syncLiveCmsUI(); renderProducts();
         });
         this.auth.onAuthStateChanged(u=>{
@@ -188,7 +192,11 @@
               this.auth.signOut().catch(()=>{});return;
             }
             if(currentUser && currentUser.role!==record.role){this.applySession(u).catch(()=>{});}
-          },()=>this.auth.signOut().catch(()=>{}));
+          },error=>{
+            // A transient/offline role listener error is NOT an instruction to log out.
+            // Keep existing auth session; Firebase rules still enforce access to data.
+            this.setStatus('Staff permissions could not be refreshed: '+textError(error),'bad');
+          });
         } else {
           this.on('staffRoles', records=>{
             if(this.uid!==u.uid)return;
@@ -226,7 +234,7 @@
         });
         if(canEditStore()) {
           this.on('adminData/posSales', record=>{
-            this.posSales=Object.entries(record||{}).map(([key,v])=>({...v,__key:key,channel:'Showroom POS'}));
+            this.posSales=Object.entries(record||{}).filter(([,v])=>v?.status!=='PendingStock').map(([key,v])=>({...v,__key:key,channel:'Showroom POS'}));
             this.updateAdminOrders();
           });
         }
@@ -235,7 +243,11 @@
           this.on('adminData/settings', data=>{
             if(data && typeof data==='object') {
               this.applying=true;
-              if(data.config) config={...config,...data.config,featureToggles:{...config.featureToggles,...data.config.featureToggles}};
+              if(data.config) {
+                const publicCategories=Array.isArray(config.customCategories)?config.customCategories:[];
+                config={...config,...data.config,featureToggles:{...config.featureToggles,...data.config.featureToggles},customCategories:publicCategories};
+              }
+              // Public category data is canonical. Do not overwrite it with old settings snapshots.
               if(Array.isArray(data.coupons)) coupons=data.coupons;
               this.applying=false;
               syncLiveCmsUI();renderProducts();renderCouponsTable();
@@ -1124,6 +1136,126 @@
   // Re-rendering inventory must not restore manager edit buttons.
   const originalInventory=window.renderAdminInventory;
   window.renderAdminInventory=()=>{originalInventory();applyStaffTabs();};
+  // V25: Store categories live at /publicSettings/customCategories under existing admin rules.
+  // This never removes or rewrites any existing product records.
+  window.renderCustomCategoryList=()=>{
+    const list=$('customCategoryList');if(!list)return;
+    list.replaceChildren();
+    const custom=Array.isArray(config.customCategories)?config.customCategories:[];
+    for(const name of custom){
+      const row=document.createElement('div');row.className='flex items-center justify-between gap-2 p-2 border rounded';
+      const text=document.createElement('span');text.textContent=name;text.className='break-all';
+      const controls=document.createElement('div');controls.className='flex gap-2 shrink-0';
+      const button=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.className='border rounded px-2 py-1';b.addEventListener('click',fn);return b;};
+      controls.append(button('Rename',()=>window.renameProductCategory(name)),button('Delete',()=>window.deleteProductCategory(name)));
+      row.append(text,controls);list.appendChild(row);
+    }
+    if(!custom.length){const t=document.createElement('p');t.className='text-neutral-500';t.textContent='No custom categories added yet.';list.appendChild(t);}
+  };
+  const categoryStatus=(msg,bad=false)=>{const el=$('customCategoryNotice');if(el){el.textContent=msg;el.className='text-xs '+(bad?'text-red-700':'text-emerald-800');}};
+  const categoryValid=name=>{
+    if(name.length<2||name.length>60||/[<>\\]/.test(name)||/[\x00-\x1f]/.test(name))throw Error('Use 2–60 characters without <, > or backslash.');
+    if(storeCategories().some(c=>c.toLowerCase()===name.toLowerCase()))throw Error('That category already exists.');
+  };
+  const saveCustomCategories=async next=>{
+    if(!canEditStore())throw Error('Only Super Admin or Owner may manage categories.');
+    // Public settings have their own admin-only Firebase write rules.
+    await live.db.ref('publicSettings/customCategories').set(next);
+    config.customCategories=next;renderCategoryChips();refreshProductCategoryOptions();renderCustomCategoryList();
+  };
+  window.handleAddProductCategory=async e=>{
+    e.preventDefault();
+    try{const name=String($('newProductCategory')?.value||'').trim().replace(/\s+/g,' ');
+      categoryValid(name);await saveCustomCategories([...(config.customCategories||[]),name]);$('newProductCategory').value='';categoryStatus('Category added and saved to Firebase.');
+    }catch(e){categoryStatus(textError(e),true);}
+  };
+  window.renameProductCategory=async old=>{
+    if(!canEditStore())return;
+    const nextName=prompt('Rename category. Products already assigned to the old name will NOT be changed automatically:',old);
+    if(nextName===null)return;
+    const name=String(nextName).trim().replace(/\s+/g,' ');if(name===old)return;
+    try{categoryValid(name);
+      if(products.some(p=>p.category===old))throw Error('Category is currently assigned to products. Edit those products first, then rename the empty category.');
+      await saveCustomCategories((config.customCategories||[]).map(c=>c===old?name:c));categoryStatus('Category renamed and synchronized.');
+    }catch(e){categoryStatus(textError(e),true);}
+  };
+  window.deleteProductCategory=async name=>{
+    if(!canEditStore())return;
+    if(products.some(p=>p.category===name)){categoryStatus('Category has products. Reassign those products before deleting.',true);return;}
+    if(!confirm('Remove custom category "'+name+'" from category choices? No products will be deleted.'))return;
+    try{await saveCustomCategories((config.customCategories||[]).filter(c=>c!==name));categoryStatus('Category removed from choices; existing products untouched.');}
+    catch(e){categoryStatus(textError(e),true);}
+  };
+
+  // V25: a staff session does not end when the dashboard or profile is closed.
+  window.openStaffProfile=()=>{
+    if(!isAdmin())return alert('Sign in as staff first.');
+    $('staffProfileName').textContent=currentUser.name||'Staff';
+    $('staffProfileEmail').textContent=currentUser.email||'';
+    $('staffProfileUID').textContent=live.uid||'';
+    $('staffProfileRole').textContent=({admin:'Super Admin',owner:'Owner',manager:'Manager'})[currentUser.role]||currentUser.role;
+    $('staffProfileModal').classList.remove('hidden');
+  };
+  window.closeStaffProfile=()=>{$('staffProfileModal')?.classList.add('hidden');};
+  window.confirmStaffLogout=async()=>{
+    if(!confirm('Log out of your staff account? Closing the dashboard does not log you out.'))return;
+    window.closeStaffProfile();await window.logoutCurrentUser();
+  };
+  const priorLogout=window.logoutCurrentUser;
+  window.logoutCurrentUser=async()=>{window.closeStaffProfile();await priorLogout();};
+  // Reopening the dashboard after returning to the storefront uses the active login.
+
+  // V25: POS finalization runs ONLY through a trusted, deployed Cloud Function.
+  // Client cannot write POS sale records or reduce stock directly.
+  let posPendingId=null,posPendingSignature='';
+  window.completePosSale=async()=>{
+    if(!canEditStore())return alert('Only Super Admin or authorized Owner may finish POS sales.');
+    if(window.mqbPosBusy)return;
+    if(!Array.isArray(posTicket)||!posTicket.length)return alert('Add at least one item to the POS bill.');
+    const paymentMethod=$('posPaymentMethod')?.value;
+    if(!['Cash','UPI','Card'].includes(paymentMethod))return alert('Select a payment method.');
+    if(!$('posPaymentConfirmed')?.checked)return alert('Confirm that you personally verified payment before completing the bill.');
+    if(!window.firebase?.functions)return alert('Secure POS backend SDK unavailable. Check network. Sale was NOT completed.');
+    const name=String($('posCustName')?.value||'').trim().slice(0,120);
+    const phone=String($('posCustPhone')?.value||'').trim().slice(0,25);
+    const postalCode=String($('posCustPincode')?.value||'').trim().slice(0,10);
+    const reference=String($('posPaymentReference')?.value||'').trim().slice(0,100);
+    const items=posTicket.map(i=>({id:i.id,qty:i.qty}));
+    const expectedTotalPaise=posTicket.reduce((n,i)=>n+Math.round(Number(i.salePrice)*100)*i.qty,0);
+    const signature=JSON.stringify({items,paymentMethod,name,phone,postalCode,reference,expectedTotalPaise});
+    if(signature!==posPendingSignature){posPendingId='POS-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);posPendingSignature=signature;}
+    if(!confirm('You verified the payment in person or in your receiving bank/terminal, and the sale amount is correct? Complete this POS sale and reduce cloud stock?'))return;
+    const btn=$('posCompleteBtn');window.mqbPosBusy=true;if(btn)btn.disabled=true;
+    try{
+      const callable=firebase.app().functions('asia-south1').httpsCallable('completeShowroomPos');
+      const response=await callable({saleId:posPendingId,items,expectedTotalPaise,paymentMethod,customerName:name,customerPhone:phone,postalCode,reference,paymentAttested:true});
+      const sale=response.data;
+      if(!sale||sale.status!=='Completed')throw Error('Server did not confirm sale completion. Do not collect a duplicate payment.');
+      posTicket=[];renderPosTicketUI();
+      for(const id of ['posCustName','posCustPhone','posCustPincode','posPaymentReference'])if($(id))$(id).value='';
+      if($('posPaymentConfirmed'))$('posPaymentConfirmed').checked=false;
+      posPendingId=null;posPendingSignature='';
+      window.showPosReceipt(sale);
+    }catch(error){
+      alert('POS sale NOT confirmed: '+textError(error)+'\nIf the server timed out, retry this same bill. The request ID prevents duplicate stock deductions.');
+    }finally{window.mqbPosBusy=false;if(btn)btn.disabled=false;}
+  };
+  window.showPosReceipt=sale=>{
+    const box=$('posReceiptContent');if(!box)return;
+    box.replaceChildren();
+    const line=(key,value)=>{const p=document.createElement('p');const b=document.createElement('strong');b.textContent=key+': ';p.append(b,document.createTextNode(String(value||'')));box.appendChild(p);};
+    const rupees=n=>'INR '+Number(n||0).toFixed(2);
+    const h=document.createElement('h2');h.textContent='MOIN QURAN BOX — POS RECEIPT';h.className='text-lg font-bold';box.appendChild(h);
+    line('Sale number',sale.orderId);line('Date',sale.date);line('Payment method',sale.paymentMethod);
+    line('Payment', 'Manually verified by staff');line('Customer',sale.customerName||'Walk-in customer');
+    if(sale.customerPhone)line('Phone',sale.customerPhone);
+    const list=document.createElement('div');list.className='my-4 border-y py-2';
+    for(const item of sale.items||[]){const p=document.createElement('p');p.textContent=item.title+' — '+item.qty+' × '+rupees(item.salePrice)+' = '+rupees(item.qty*item.salePrice);list.appendChild(p);}
+    box.appendChild(list);line('TOTAL RECEIVED',rupees(sale.total));
+    const foot=document.createElement('p');foot.className='text-xs mt-3';foot.textContent='POS receipt only; not a GST tax invoice. Payment confirmation is based on staff attestation. Return/refund per store policy.';box.appendChild(foot);
+    $('posReceiptModal')?.classList.remove('hidden');
+  };
+  window.closePosReceipt=()=>{$('posReceiptModal')?.classList.add('hidden');};
   // Profile icon opens the correct dashboard for all verified staff roles.
   window.handleUserIconClick=()=>{
     if(currentUser && ['admin','owner','manager'].includes(currentUser.role)) openAdminDashboardModal();
